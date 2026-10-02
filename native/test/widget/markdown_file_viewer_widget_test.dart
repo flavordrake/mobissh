@@ -98,7 +98,7 @@ class _ScriptedSftpSession implements SftpSession {
 }
 
 /// Injectable text fetcher: returns canned markdown without touching SFTP.
-class _CannedTextFetcher implements TextFileFetcher {
+class _CannedTextFetcher extends TextFileFetcher {
   _CannedTextFetcher(this.text);
   final String text;
   SftpEntry? lastEntry;

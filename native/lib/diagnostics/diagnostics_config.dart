@@ -15,9 +15,25 @@
 // content). A tracing-enabled internal build passes
 // `--dart-define=MOBISSH_RAW_DIAGNOSTICS=true`.
 //
-// Mirrors the existing `String.fromEnvironment` idiom in
-// `ui/feedback_overlay.dart` (`MOBISSH_FEEDBACK_ENDPOINT` / `MOBISSH_FEEDBACK_KEY`).
+// Mirrors the `String.fromEnvironment` idiom of [feedbackEndpoint] /
+// [feedbackKey] below.
 const bool kRawContentDiagnosticsEnabled = bool.fromEnvironment(
   'MOBISSH_RAW_DIAGNOSTICS',
   defaultValue: false,
 );
+
+/// Endpoint that ingests bug reports. Compile-time overridable (#966): the
+/// personal build keeps the tailnet default; the PUBLIC Play build points at the
+/// Cloudflare Worker via `--dart-define=MOBISSH_FEEDBACK_ENDPOINT=…`
+/// (see infra/bug-report-worker/). The orchestrator's watcher polls the files
+/// the tailnet endpoint writes. Crash uploads (#1243) go to the same origin.
+const String feedbackEndpoint = String.fromEnvironment(
+  'MOBISSH_FEEDBACK_ENDPOINT',
+  defaultValue: 'https://mobissh.tailbe5094.ts.net/api/bug-report',
+);
+
+/// Shared key sent as `X-MobiSSH-Key` by every uploader (bug report, crash).
+/// The relay's feedback guard (#484/#1115) rejects uploads without it. Baked
+/// in by `--dart-define=MOBISSH_FEEDBACK_KEY=…` (ship-native / release AAB);
+/// empty → no header. Never logged.
+const String feedbackKey = String.fromEnvironment('MOBISSH_FEEDBACK_KEY');

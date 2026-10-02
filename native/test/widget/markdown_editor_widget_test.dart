@@ -21,6 +21,8 @@
 // mirror of how markdown_file_viewer_widget_test.dart fakes
 // [textFileFetcherProvider].
 
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -31,9 +33,12 @@ import 'package:mobissh/services/text_file_writer.dart';
 import 'package:mobissh/ui/markdown_file_viewer.dart';
 
 /// Injectable text fetcher: returns canned markdown without touching SFTP.
-class _CannedTextFetcher implements TextFileFetcher {
-  _CannedTextFetcher(this.text);
+/// Extends (not implements) so the interface's default `fetchContent` —
+/// a canned String is editable — applies unless [content] overrides it (#1227).
+class _CannedTextFetcher extends TextFileFetcher {
+  _CannedTextFetcher(this.text, {this.content});
   final String text;
+  final TextFileContent? content;
 
   @override
   Future<String> fetch(
@@ -42,6 +47,14 @@ class _CannedTextFetcher implements TextFileFetcher {
     int maxBytes = 2 * 1024 * 1024,
     void Function(int received, int? total)? onProgress,
   }) async => text;
+
+  @override
+  Future<TextFileContent> fetchContent(
+    String sessionId,
+    SftpEntry entry, {
+    int maxBytes = 2 * 1024 * 1024,
+    void Function(int received, int? total)? onProgress,
+  }) async => content ?? TextFileContent(text: text);
 }
 
 /// Records every write; optionally fails with [error] (set/cleared per test).
@@ -84,13 +97,16 @@ Future<void> _settleToasts(WidgetTester tester) async {
 
 /// Pumps the viewer as a PUSHED route (so there is something to pop back to)
 /// and returns the fake writer.
-Future<_RecordingWriter> _openViewer(WidgetTester tester) async {
+Future<_RecordingWriter> _openViewer(
+  WidgetTester tester, {
+  TextFileContent? content,
+}) async {
   final writer = _RecordingWriter();
   final navKey = GlobalKey<NavigatorState>();
   final container = ProviderContainer(
     overrides: [
       textFileFetcherProvider.overrideWithValue(
-        _CannedTextFetcher(_sourceMarkdown),
+        _CannedTextFetcher(content?.text ?? _sourceMarkdown, content: content),
       ),
       textFileWriterProvider.overrideWithValue(writer),
     ],
@@ -239,6 +255,79 @@ void main() {
     expect(editable.enableSuggestions, isTrue);
     expect(editable.autocorrect, isTrue);
     expect(editable.keyboardType, TextInputType.multiline);
+  });
+
+  // #1227 item 2: bytes that don't survive a strict UTF-8 round-trip were
+  // decoded lossily and a Save wrote U+FFFD over the server's bytes. Such a
+  // file still opens for VIEWING, but Edit is disabled with a PERSISTENT
+  // explanation where the action is — never a toast.
+  testWidgets('a file that is not valid UTF-8 opens read-only: Edit disabled '
+      'with a persistent explanation (#1227)', (tester) async {
+    final writer = await _openViewer(
+      tester,
+      content: const TextFileContent(
+        text: '# Latin\n\ncaf� body\n',
+        readOnlyReason: notUtf8ReadOnlyMessage,
+      ),
+    );
+    // Viewing works.
+    expect(find.byType(Markdown), findsOneWidget);
+    expect(find.textContaining('body'), findsOneWidget);
+
+    final toggle = tester.widget<IconButton>(
+      find.byKey(const Key('markdown-edit-toggle')),
+    );
+    expect(toggle.onPressed, isNull, reason: 'Edit must be disabled');
+    expect(
+      find.byKey(const Key('markdown-viewer-edit-disabled')),
+      findsOneWidget,
+    );
+    expect(find.textContaining("isn't valid UTF-8"), findsOneWidget);
+
+    // PERSISTENT: still there long after any toast would have gone.
+    await _settleToasts(tester);
+    expect(
+      find.byKey(const Key('markdown-viewer-edit-disabled')),
+      findsOneWidget,
+    );
+
+    // Tapping the disabled action opens no editor and writes nothing.
+    await tester.tap(
+      find.byKey(const Key('markdown-edit-toggle')),
+      warnIfMissed: false,
+    );
+    await _pump(tester);
+    expect(find.byKey(const Key('markdown-viewer-editor')), findsNothing);
+    expect(writer.calls, isEmpty);
+  });
+
+  testWidgets('BOM + CRLF + emoji/CJK survive load → edit → Save byte-exact '
+      '(#1227)', (tester) async {
+    const body = '# T\r\n\r\ncafé ✓ 日本語 🎉\r\n';
+    final writer = await _openViewer(
+      tester,
+      content: const TextFileContent(text: body, hasBom: true),
+    );
+    await _enterEditMode(tester);
+    // The BOM is not in the edit buffer (it is not the user's text).
+    expect(_editorText(tester), body);
+
+    const added = 'added ✓ 日本語 🎉\r\n';
+    await tester.enterText(
+      find.byKey(const Key('markdown-viewer-editor')),
+      '$body$added',
+    );
+    await _pump(tester);
+    await tester.tap(find.byKey(const Key('markdown-viewer-save')));
+    await _pump(tester);
+
+    expect(writer.calls.length, 1);
+    expect(
+      utf8.encode(writer.calls.single.content),
+      [0xEF, 0xBB, 0xBF, ...utf8.encode('$body$added')],
+      reason: 'saved bytes == BOM + original (CRLF intact) + the edit',
+    );
+    await _settleToasts(tester);
   });
 
   testWidgets('Save is inert when nothing changed', (tester) async {
