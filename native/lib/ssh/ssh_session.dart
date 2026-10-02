@@ -20,6 +20,7 @@ import 'package:flutter/foundation.dart';
 import '../diagnostics/connect_trace.dart';
 import 'host_key_mismatch.dart';
 import 'host_key_store.dart';
+import 'key_parse_error.dart';
 import 'ssh_connect_params.dart';
 
 export 'host_key_mismatch.dart';
@@ -103,6 +104,10 @@ class SshSessionData {
   /// a review + forget. Null for every other failure.
   final HostKeyMismatch? hostKeyMismatch;
 
+  /// #1229: input was dropped because no shell was open; cleared when the
+  /// next shell is ready. Drives the "input not sent" banner.
+  final bool inputNotSent;
+
   const SshSessionData({
     this.state = SshSessionState.idle,
     this.error,
@@ -113,6 +118,7 @@ class SshSessionData {
     this.port,
     this.username,
     this.hostKeyMismatch,
+    this.inputNotSent = false,
   });
 
   SshSessionData copyWith({
@@ -125,6 +131,7 @@ class SshSessionData {
     int? port,
     String? username,
     HostKeyMismatch? hostKeyMismatch,
+    bool? inputNotSent,
     bool clearError = false,
     bool clearPendingHostKey = false,
     bool clearBanner = false,
@@ -144,6 +151,7 @@ class SshSessionData {
       hostKeyMismatch: clearHostKeyMismatch
           ? null
           : (hostKeyMismatch ?? this.hostKeyMismatch),
+      inputNotSent: inputNotSent ?? this.inputNotSent,
     );
   }
 }
@@ -407,13 +415,12 @@ class SshSessionController {
       } catch (e) {
         _readyTimer?.cancel();
         _readyTimer = null;
-        ctrace('task.ssh', 'connect: key parse FAILED — $e');
+        // #1252: the exception text can quote the key — log the kind only.
+        ctrace('task.ssh', 'connect: key parse FAILED (${keyParseFailureKind(e)})');
         _emit(
           _data.copyWith(
             state: SshSessionState.failed,
-            error:
-                'Could not load private key — wrong passphrase or '
-                'unsupported key format ($e)',
+            error: keyParseFailureMessage(e),
           ),
         );
         return;

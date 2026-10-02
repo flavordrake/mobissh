@@ -1084,14 +1084,15 @@ class SessionHost {
   void _handleInput(SshInputCommand cmd) {
     final hosted = _sessions[cmd.sessionId];
     if (hosted == null) return;
-    hosted.metrics.bytesOut += cmd.bytes.length;
-    // Write keystrokes to the live PTY. Before the shell is open we drop into
-    // the scrollback "echo" so the audit still shows activity.
+    // Write keystrokes to the live PTY. With no shell the bytes are DROPPED and
+    // the UI told (#1229): never echoed into scrollback, which reseeds the
+    // terminal and ships in snapshots — a password typed here would persist.
     final shell = hosted.shell;
     if (shell != null) {
+      hosted.metrics.bytesOut += cmd.bytes.length;
       shell.send(cmd.bytes);
     } else {
-      hosted.appendScrollback(cmd.bytes);
+      _gateway.send(SshInputNotSentEvent(sessionId: cmd.sessionId).toJson());
     }
   }
 
@@ -1655,7 +1656,7 @@ class SessionHost {
       if (err.contains('HOST KEY CHANGED')) return 'hostkey-changed';
       if (err.contains('algorithm negotiation failed')) return 'algo-mismatch';
       if (err.contains('TCP connect failed')) return 'tcp-connect-failed';
-      if (err.contains('Could not load private key') ||
+      if (err.contains("Couldn't read the private key") ||
           err.contains('Private key contained no usable identity')) {
         return 'key-load-failed';
       }
@@ -2573,11 +2574,10 @@ class SessionHost {
   static SshAuth _decodeAuth(Map<String, dynamic> json) {
     final type = json['type'] as String?;
     if (type == 'password') {
-      final pw = json['password'] as String;
-      // Presence trace (length only — never the value): confirms the password
-      // survived the UI→task IPC. Compare against ui.form's pwLen (#542/#543).
-      ctrace('task.host', 'decodeAuth password pwLen=${pw.length}');
-      return SshAuth.password(pw);
+      // Method only: the length narrows a brute force and ships in bug
+      // reports (#1252).
+      ctrace('task.host', 'decodeAuth password');
+      return SshAuth.password(json['password'] as String);
     }
     if (type == 'key') {
       final pemB64 = json['pem'] as String;
