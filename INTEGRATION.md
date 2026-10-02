@@ -2,8 +2,9 @@
 
 MobiSSH can receive terminal bell notifications from coding CLI agents running on the
 same machine. When an agent needs input (permission prompt, idle, task complete), a hook
-script writes `\a` to the terminal. MobiSSH's xterm.js parser triggers a ServiceWorker
-notification, alerting you on your phone.
+script writes `\a` to the terminal. The app watches each session's output for a bell
+(and for OSC 9 / OSC 777 notifications) and raises an Android notification, alerting
+you on your phone when you are not looking at that session.
 
 This works with any agent that supports shell hooks or notification callbacks.
 
@@ -12,7 +13,8 @@ This works with any agent that supports shell hooks or notification callbacks.
 1. Agent fires a hook event (e.g., permission request, stop)
 2. Hook script walks `/proc` to find the ancestor's `/dev/pts/*` device
 3. Script writes `\a` (bell) to that device
-4. MobiSSH's terminal parser receives the bell and fires a push notification
+4. The app sees the bell in that session's output and posts a notification; tapping it
+   opens the session (and, inside tmux, the window that rang)
 
 ## notify-bell.sh
 
@@ -144,12 +146,4 @@ export default function plugin() {
   rather than going directly to the terminal emulator.
 - The 2-second cooldown deduplicates rapid-fire events but means you won't get
   separate notifications for events within 2 seconds of each other.
-- Hook configuration is manual per-agent. There is no unified plugin system across
-  coding agents yet. Claude Code has an emerging plugin framework that may support
-  bundled hooks in the future.
-
-## Future
-
-Once coding agent plugin ecosystems mature, we plan to offer one-click integration
-directly from MobiSSH's settings panel. The current manual approach will continue
-to work regardless.
+- Hook configuration is manual per agent; the app does not install hooks for you.

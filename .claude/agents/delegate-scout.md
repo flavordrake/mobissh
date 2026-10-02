@@ -11,18 +11,23 @@ deterministic discovery and classification scripts and return structured results
 
 Run these scripts in order. Each script handles its own output paths and logging.
 
-1. `scripts/delegate-discover.sh --out /tmp/delegate-data.json`
-   Lists all open issues, bot branches, diff stats.
+All four scripts share one default directory, `$MOBISSH_TMPDIR` (default
+`/tmp/mobissh`), so no path flags are needed.
 
-2. `scripts/delegate-classify.sh --data /tmp/delegate-data.json`
-   Classifies each issue: delegate, already-attempted, decompose, human-only, blocked.
+1. `scripts/delegate-discover.sh`
+   Lists all open issues, bot branches, diff stats. Writes `$MOBISSH_TMPDIR/delegate-data.json`.
+
+2. `scripts/delegate-classify.sh`
+   Reads `delegate-data.json`; classifies each issue: delegate, already-attempted,
+   decompose, human-only, blocked. Writes `$MOBISSH_TMPDIR/delegate-classified.json`.
 
 3. For each `already-attempted` issue, run:
    `scripts/delegate-failure-analysis.sh <issue-number>`
    Analyzes what went wrong in the prior bot attempt.
 
-4. `scripts/delegate-fetch-bodies.sh --data /tmp/delegate-classified.json`
-   Fetches issue bodies for all classified issues.
+4. `scripts/delegate-fetch-bodies.sh`
+   Reads `delegate-classified.json`; prints issue bodies for the delegate,
+   already-attempted and decompose buckets as JSON on stdout.
 
 ## Output
 

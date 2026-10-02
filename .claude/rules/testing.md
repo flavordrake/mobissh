@@ -15,10 +15,11 @@ Add `--with-integration` for the on-emulator tier (see the contract below), and
 lease a device with `scripts/with-fleet-emulator.sh` to run it.
 
 ## Infrastructure tests (`test/infra/`, node:test)
-The non-Flutter infrastructure — `server/feedback-guard.js`, `server/manifest.js`,
-`scripts/notify-parse.sh`, the TRACE scripts, `scripts/termux-bootstrap.sh` —
-is covered by `test/infra/*.test.js`, run by `scripts/test-infra.sh` from fast
-gate 0.
+The non-Flutter infrastructure — `server/feedback-guard.js`, the feedback store's
+bug-report allowlist, `scripts/notify-parse.sh`, the TRACE scripts,
+`scripts/bot-branch.sh` worktree safety, the self-update publish side and
+`scripts/doc-drift.sh` — is covered by `test/infra/*.test.js`, run by
+`scripts/test-infra.sh` from fast gate 0.
 
 - **node:test, never a test framework with npm dependencies.** Agent worktrees have
   no `node_modules` (gitignored, never copied), so a gate step needing npm deps is
@@ -30,7 +31,9 @@ gate 0.
 The native app is the product; this is its gate.
 
 - **Fast gate (every commit):** `scripts/native-fast-gate.sh` = gate 0 (bash rule
-  tests + `scripts/test-infra.sh`) + `flutter analyze` +
+  tests + `scripts/test-infra.sh` + `scripts/doc-drift.sh --warn`, which reports
+  doc/script drift but never fails the gate; `ship-native.sh` runs it with
+  `--block`) + `flutter analyze` +
   `flutter test --exclude-tags integration`. It CANNOT boot an emulator, so it runs
   only headless unit + widget tests. This is necessary but NOT sufficient.
   It is also what CI runs (`.github/workflows/ci.yml`).
@@ -73,9 +76,10 @@ The native app is the product; this is its gate.
   disk. Fixture setup scripts must honour `SSHD_HOST` — the runner pins it to an
   unambiguous container, so a hard-coded `test-sshd` seeds the wrong sshd.
 - **The suite enforces an ACCEPTED BASELINE, not an all-green run (#1101/#1205).**
-  `native/integration_test/BASELINE.manifest` is the record: 74 expected-pass of the
-  84 discovered device tests, plus 10 known-red each with a one-line cause and the
-  issue that owns it. The suite's verdict:
+  `native/integration_test/BASELINE.manifest` is the record. Its `accepted` line is
+  the tally (currently 81 expected-pass, 11 known-red each with a one-line cause and
+  the issue that owns it, and 1 `elsewhere` test owned by another runner). The
+  suite's verdict:
   - an **expected-pass** test fails → the suite FAILS (the reason the gate exists)
   - a **known-red** test fails → reported, not fatal
   - a **known-red** test PASSES → the suite FAILS: promote it to `expect` and bump the

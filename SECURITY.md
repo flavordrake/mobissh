@@ -1,104 +1,46 @@
 # Security
 
-MobiSSH is designed for personal use over Tailscale (WireGuard mesh). The bridge runs on your private network -- not exposed to the internet.
+MobiSSH is an SSH client: it connects straight from the device to your server with dartssh2. No relay or proxy of the developer's sits in that path. It is built for personal use, typically over Tailscale (WireGuard mesh).
 
-## Credential vault
+## Secrets on the device
 
-Passwords, private keys, and passphrases are AES-GCM encrypted with a 256-bit key:
+- Passwords, private keys and passphrases are stored through `flutter_secure_storage` (`native/lib/storage/secrets_store.dart`): Android Keystore-backed encrypted preferences, the Apple Keychain on macOS, libsecret on Linux. When secure storage is unavailable the feature is blocked; there is no plaintext fallback.
+- Profiles hold no secrets; they reference a secret or a key in the key library by id.
+- There is no biometric gate today. Unlocking the device is what protects the stored secrets.
+- Encrypted backup (`native/lib/storage/backup.dart`) seals everything in one file with AES-256-GCM under an Argon2id key derived from a passphrase of 12 or more characters. The ssh_config export contains no secrets.
 
-- **Chrome/Android:** `PasswordCredential` -- biometric / screen lock gated
-- **No vault available:** credentials are not persisted at all. No plaintext fallback, ever.
+## Host keys
 
-iOS credential persistence requires a WebAuthn PRF implementation (tracked in issue #2). Until then, iOS users must re-enter credentials each session.
+- First contact shows the server's SHA256 fingerprint and asks you to trust it (trust on first use). Fingerprints are public data and are kept in SharedPreferences (`native/lib/ssh/host_key_store.dart`).
+- A changed key refuses to connect. The Review screen shows the old and new fingerprints with a MITM warning; "Forget old key and reconnect" removes only that host:port, and the new key still goes through the first-contact prompt. Jump hosts are checked hop by hop.
+- Keys stored before the SHA256 switch (MD5) get a one-time re-confirm prompt.
 
-## Transport and access control
+## What leaves the device besides SSH
 
-- WebSocket upgrade includes an HMAC token (per-boot secret, timing-safe, expiring). This is an anti-automation measure, not session authentication -- any client that can reach the HTTP endpoint can obtain a token. Real access control is provided by the network layer (Tailscale).
-- Origin header validation prevents cross-site WebSocket hijacking (CSWSH) from malicious webpages.
-- `Cache-Control: no-store` on all responses. Network-first service worker.
-- SSRF prevention blocks private/reserved IP ranges (post-DNS resolution)
-- SSH host key TOFU with mismatch warnings
-- CSP restricts all script/style/connect sources. xterm.js vendored locally for `script-src 'self'`
+- **Bug reports** you choose to send, after a Review & Send screen that lets you drop the screenshots and traces. Text logs pass through a best-effort secret scrubber (`native/lib/diagnostics/feedback_bundle.dart`).
+- **Crash reports**, uploaded automatically on the next launch or connect (`native/lib/diagnostics/crash_reporter.dart`). They hold the error, stack trace, device model, OS and app version.
+- **Update checks** in sideloaded builds: a request for the published version file. A downloaded update is installed only if its sha256 matches the manifest and its package name and signing certificate match the running app.
 
-## Transparency
+Details for each, and which builds include them, are in [developer.md](developer.md) and [docs/PRIVACY.md](docs/PRIVACY.md).
 
-The bridge forwards raw bytes. No command parser, no action log, no telemetry. Your SSH session is captured by the same standard audit tools (`sshd` logs, `auditd`, shell history) as any direct connection.
+## The companion server
+
+`server/index.js` serves the install page, the published builds and the update manifest, relays bug reports, and hosts the Claude Code approval bridge. It never sees SSH traffic.
+
+- Static responses carry `Cache-Control: no-store` and a restrictive CSP (`script-src 'self'`, `frame-ancestors 'none'`).
+- The feedback routes require the `X-MobiSSH-Key` header and are rate limited (`server/feedback-guard.js`).
+- The approval hook (`hooks/mobissh-bridge.sh`) fails open: when the server is unreachable, or no client is listening, it answers with the configured default mode, which is `allow` unless `.approval-mode` says otherwise. Do not rely on it as a security control.
+- Access control is the network layer: run it on a tailnet, not on the open internet.
 
 ## Threat model
 
-**In scope:** protecting credentials at rest, preventing unauthorized SSH session initiation, preventing XSS/injection in the terminal UI, ensuring transport integrity.
+In scope: protecting credentials at rest, host-key verification, transport integrity, and keeping session content off the developer's systems.
 
-**Out of scope:** network-level attacks (delegated to Tailscale/WireGuard), compromised SSH target servers, physical device compromise.
+Out of scope: network-level attacks (delegated to Tailscale/WireGuard), compromised SSH servers, and a compromised or unlocked device.
 
-## External security assessments
+## Audits
 
-Two independent static reviews were conducted in March 2026. Full reports are in [`assessments/`](assessments/):
-
-- [Codex review](assessments/CODEX-REVIEW.md) -- 5 findings (2 High, 2 Medium, 1 Low)
-- [Gemini review](assessments/GEMINI-REVIEW.md) -- 4 findings (1 Medium, 3 Low)
-
-Both reviews independently flagged CSWSH and SSRF as the top actionable issues. Both praised the vault implementation.
-
-### Actions taken (v0.7.0)
-
-| Finding | Severity | Action | Status |
-|---------|----------|--------|--------|
-| CSWSH: no Origin check when `TS_SERVE=1` | High/Medium | Added Origin header validation in `verifyClient` (`server/origin.js`) | Fixed (#83) |
-| SSRF: string-prefix bypass via DNS rebinding | Medium/Low | Replaced with post-DNS `isPrivateIp()` using numeric CIDR matching | Fixed (#84) |
-| Clipboard: OSC 52 addon loaded unconditionally | Medium | Disabled by default; opt-in toggle in Settings > Danger Zone | Fixed (#85) |
-| WS token described as auth boundary | High | Revised docs to clarify it's anti-automation, not session auth | Fixed |
-| SFTP downloads buffered in memory | Low | Accepted risk; chunked streaming added in v0.8.0 (#189) | Fixed |
-| Root container execution | Low | Required for embedded Tailscale daemon; standard for this architecture | Accepted |
-| Insecure transport (non-VPN) | Low | Already mitigated: UI warning + Tailscale default deployment | No change needed |
-
-### Actions taken (v0.8.0)
-
-| Finding | Severity | Action | Status |
-|---------|----------|--------|--------|
-| Cross-session SFTP upload hijack via fingerprint | High/Medium | Added connectionId per WS connection; resume verifies ownership | Fixed (#241) |
-| escHtml missing single-quote escape | Low | Added `&#39;` escape for defense-in-depth | Fixed (#242) |
-| SW ignores Cache-Control: no-store | Low | Filed; SW caches responses despite no-store header | Open (#243) |
-| SSRF via allowPrivate client flag | Low/Medium | Accepted: danger zone toggle, Tailscale-only deployment | By design |
-| Git hash in meta tag | Low | Accepted: intentional for version tracking | By design |
-
-### Actions taken (v1.0.0)
-
-| Finding | Severity | Action | Status |
-|---------|----------|--------|--------|
-| Production dependencies | N/A | 0 vulnerabilities (ssh2, ws only). Dev deps (webdriverio, nodemon) excluded via `--omit=dev` | Clean |
-| Dev dependency vulns (undici, fast-xml-parser, minimatch, picomatch, brace-expansion) | High/Moderate | `npm audit fix` applied. All 5 patched. | Fixed |
-| SessionHandle output buffer | Low | Capped at 1MB with oldest-chunk eviction to prevent OOM on background sessions | Fixed |
-| Duplicate session state | Low | `createSession()` errors on duplicate profile (not silent repair). `connect()` explicitly closes old sessions | Fixed (#391) |
-| Modal cancel unresponsive | Medium | AbortController aborted before WS close. `_connectTimeout` moved to module scope. WS error handler calls `disconnect()` | Fixed (#388) |
-| pnpm migration for strict supply chain | Medium | Filed as #389. npm audit clean for now | Open |
-
-### Actions taken (v1.1.0)
-
-| Finding | Severity | Action | Status |
-|---------|----------|--------|--------|
-| SW ignores Cache-Control: no-store | Low | SW fetch handler now checks `no-store` before `cache.put()` | Fixed (#243, PR #420) |
-| Modal cancel/close non-functional on device | Medium | Thread sessionId to cancel, cancelReconnect on error dismiss | Fixed (#417, PR #421) |
-| Key passphrase not persisted in vault | Medium | Passphrase encrypted alongside key in vault via vaultStore/vaultLoad | Fixed (#426, PR #429) |
-| Dependency vulns (basic-ftp CRLF injection, lodash prototype pollution) | High | `npm audit fix` applied. Both patched | Fixed |
-| IPv6 SSRF bypass in `isPrivateIp()` | High | Expanded IPv6 forms bypass private-address block. Filed for fix | Open |
-| Backup import persists plaintext credentials | Medium | `importBackup()` doesn't filter sensitive fields. Filed for fix | Open |
-| Profile export allowlist | N/A | `exportProfilesJSON()` uses strict allowlist (title, host, port, username, authType only) — no credentials in export | Verified (#419, PR #431) |
-
-### Positive findings (both reviews)
-
-- AES-GCM vault with PBKDF2 (600k iterations), no plaintext fallback
-- HMAC-SHA256 WS token with timingSafeEqual() comparison
-- escHtml() used consistently on user-supplied DOM content
-- Restrictive CSP: `script-src 'self'`, `style-src 'self'`, `frame-ancestors 'none'`
-- Small dependency footprint (ssh2, ws, xterm.js) -- all current, 0 production vulnerabilities
-- SFTP paths passed to ssh2 without shell interpretation
-- Cache-Control: no-store on all responses
-
-## Known limitations
-
-- `PasswordCredential` API is Chrome/Android only. Safari, Firefox, and iOS do not support it. Credential persistence on these platforms requires the WebAuthn PRF path (#2).
-- The HMAC WS token is transmitted in the WebSocket URL query string. Over WSS (TLS) this is encrypted in transit, but may appear in server access logs. The token is an anti-automation measure; Tailscale's encrypted tunnel provides the real access control layer.
-- Service worker caches the app shell for offline use. `Cache-Control: no-store` and network-first strategy prevent serving stale authenticated content, but the offline shell itself is cached.
+`scripts/security-audit-native.sh` runs the native audit. The reports in [`assessments/`](assessments/) (March 2026) reviewed the retired PWA and its WebSocket bridge; their findings do not apply to the native app.
 
 ## Reporting vulnerabilities
 

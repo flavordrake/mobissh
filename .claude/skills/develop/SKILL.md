@@ -5,13 +5,13 @@ description: Use when the user says "develop", "work on issue", "implement issue
 
 # Local Development Agent
 
-Spawn isolated develop agents to implement GitHub issues locally. Replaces the remote
-Claude bot (GitHub Actions) with faster, more reliable local execution.
+Spawn isolated develop agents to implement GitHub issues locally, each in its own
+worktree on a `bot/issue-N` branch.
 
 ## Input parsing
 
 - `/develop 16` → single issue
-- `/develop 3,9,16` → batch (max 3 parallel, rest queued)
+- `/develop 3,9,16` → batch (max 4 parallel, rest queued)
 - `/develop` (no args) → **auto-propose mode** (see below)
 
 ## Auto-propose mode
@@ -49,11 +49,13 @@ For each issue number:
    scripts/gh-ops.sh fetch-issues {N}
    ```
 
-2. Check for existing open PR on `bot/issue-{N}`:
+2. Check whether `bot/issue-{N}` is already pushed (`gh-ops.sh search` lists issues
+   only, never PRs; check the remote itself, never the local tracking ref):
    ```bash
-   scripts/gh-ops.sh search "head:bot/issue-{N}"
+   scripts/run-in-repo.sh git ls-remote origin bot/issue-{N}
    ```
-   If an open PR exists, ask the user: resume (force-push) or skip?
+   If the branch exists, ask the user: resume (the agent merges main into the existing
+   branch; never force-push) or skip?
 
 3. Check for prior failure summaries in `.claude/projects/-home-dev-workspace-mobissh/memory/bot-attempts.md`
 
@@ -65,12 +67,9 @@ For each issue number:
 
 > "User's intended text is faithfully represented to the terminal as entered, in all cases."
 
-For IME/input-related issues, the native integration suite (`native/integration_test/`) provides:
-- `IntentCapture` — records what the user intended (swipe, voice, keyboard)
-- `TerminalReceiver` — records what the terminal actually received
-- `assertFaithful(intent, receiver, expected)` — the North Star assertion
-
-Tests must verify **faithfulness** (intent == received), not just mechanics.
+For IME/input-related issues, tests must verify **faithfulness** (the bytes the shell
+received == what the user entered), not just mechanics. Assert the received shell bytes
+in an on-emulator test in `native/integration_test/`.
 
 ## Composing the agent prompt
 
@@ -225,7 +224,7 @@ Use the Agent tool with:
 - `subagent_type: "general-purpose"` (custom types are broken — see `.claude/rules/agents.md`)
 - `isolation: "worktree"` **(MANDATORY — never omit)**
 - `run_in_background: true` for batch mode (2nd+ agent)
-- Model: omit for default (inherits parent). See "Model Selection" above.
+- No `model` parameter: agents inherit the parent model and its permissions (CLAUDE.md).
 
 **Why worktree isolation is non-negotiable:** Without it, agents share the working tree.
 Uncommitted changes from one agent contaminate others and the main session. This caused

@@ -16,15 +16,11 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
-const { rewriteManifest } = require('./manifest');
 const feedbackStore = require('./feedback-store');
 const feedbackGuard = require('./feedback-guard');
 
 const PORT = process.env.PORT || 8081;
 const HOST = process.env.HOST || '0.0.0.0';
-// BASE_PATH: set when served behind a reverse-proxy at a subpath (e.g. /ssh).
-// Must start with / and have no trailing slash.  Example: BASE_PATH=/ssh
-const BASE_PATH = (process.env.BASE_PATH || '').replace(/\/$/, '');
 
 const PUBLIC_DIR = path.resolve(__dirname, '..', 'public');
 // Persistent distribution dir for the native APK + its install page (#700).
@@ -213,7 +209,6 @@ const MIME = {
   '.js':   'application/javascript; charset=utf-8',
   '.css':  'text/css; charset=utf-8',
   '.json': 'application/json; charset=utf-8',
-  '.webmanifest': 'application/manifest+json',
   '.svg':  'image/svg+xml',
   '.png':  'image/png',
   '.ico':  'image/x-icon',
@@ -517,7 +512,7 @@ const server = http.createServer((req, res) => {
   }
 
   // /clear — nuke SW cache + storage so mobile browsers get a fresh start.
-  // Visit https://<host>/ssh/clear after a bad SW deploy.
+  // Visit https://<host>/clear on a device that still has the retired PWA installed.
   // Uses JS instead of Clear-Site-Data header (which hangs on some mobile browsers).
   if (req.url === '/clear') {
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
@@ -574,25 +569,7 @@ log('\\nDone. Redirecting...');setTimeout(()=>location.href='./',1500)})();
         '<head>',
         `<head><meta name="app-version" content="${APP_VERSION}:${GIT_HASH}">`
       );
-      // Inject base path so the client knows the subpath without unsafe-inline CSP.
-      if (BASE_PATH) {
-        html = html.replace(
-          '<head>',
-          `<head><meta name="app-base-path" content="${BASE_PATH}">`
-        );
-      }
       data = Buffer.from(html);
-    }
-    // Rewrite manifest.json: always apply stable identity + subpath rewrites (#83).
-    // Also accept ?name= query param to customise name/short_name for multi-install (#131).
-    if (path.basename(filePath) === 'manifest.json') {
-      try {
-        const manifestUrl = new URL(req.url, 'http://localhost');
-        const customName = manifestUrl.searchParams.get('name') || '';
-        if (BASE_PATH || customName) {
-          data = rewriteManifest(data, customName);
-        }
-      } catch (_) {}
     }
     const headers = {
       'Content-Type': MIME[ext] || 'application/octet-stream',
@@ -681,4 +658,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { rewriteManifest, server };
+module.exports = { server };

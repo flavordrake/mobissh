@@ -77,8 +77,8 @@ else
   exit 1
 fi
 # Same gate (#1205): the non-Flutter infrastructure that outlived the PWA —
-# the feedback-ingestion guard, manifest rewriting, notify-parse, the TRACE
-# scripts and the published termux installer. Their only coverage used to live
+# the feedback-ingestion guard and service, notify-parse, the TRACE scripts
+# and the other infra listed in scripts/test-infra.sh. Their only coverage used to live
 # in src/modules/__tests__ under vitest; it moved to test/infra on node:test so
 # it runs here (agent worktrees have no node_modules) and in CI.
 if "${REPO_ROOT}/scripts/test-infra.sh"; then
@@ -87,6 +87,10 @@ else
   echo "! infra tests: FAIL"
   exit 1
 fi
+
+# Fleet doc-drift standard (#1240, from opsurface #229): warn here, never fail;
+# ship-native.sh runs it with --block.
+"${REPO_ROOT}/scripts/doc-drift.sh" --warn
 
 echo "> Gate 1/${TOTAL_GATES}: flutter analyze..."
 if "${REPO_ROOT}/scripts/flutter-cmd.sh" --in "$NATIVE_DIR" analyze; then

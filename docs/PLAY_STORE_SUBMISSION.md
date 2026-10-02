@@ -14,7 +14,7 @@ Legend: **[ready]** already provisioned · **[paste]** copy the value · **[you]
 |---|---|---|
 | **App bundle (.aab)** `[ready]` | `https://mobissh.tailbe5094.ts.net/mobissh-release.aab` | Upload to a release |
 | **Privacy policy** `[ready]` | `https://mobissh-bug-report.flavordrake.workers.dev/privacy` | Store listing + App content |
-| **Bug-report endpoint** `[ready]` | `https://mobissh-bug-report.flavordrake.workers.dev` | Already baked into the build — nothing to enter |
+| **Bug-report endpoint** `[ready]` | `https://mobissh-bug-report.flavordrake.workers.dev` | Baked in by `scripts/build-release-aab.sh` when `FEEDBACK_ENDPOINT` is set; without it the build posts to the tailnet |
 
 > Your private **report viewer** (`/`, Basic-auth) and the R2 bucket are for you only — never entered into Play.
 
@@ -59,7 +59,7 @@ A shell prompt and the file browser confirm core functionality.
 
 ## 3. Data safety — full answers
 
-The honest core: the app collects **nothing automatically**; the only data that reaches you is a bug report the user explicitly sends, after the in-app Review & Send screen.
+The honest core: session content and credentials never reach you. What does: a bug report the user explicitly sends after the in-app Review & Send screen, and crash reports, which upload automatically on the next launch or connect (`native/lib/diagnostics/crash_reporter.dart`). The crash endpoint is hard-coded to the tailnet host, so a Play install off the tailnet never delivers them, and today they are rejected anyway (no feedback key, #1243). Declare crash logs as collected automatically regardless.
 
 **Overview questions:**
 
@@ -73,7 +73,7 @@ The honest core: the app collects **nothing automatically**; the only data that 
 
 | Category → type | Why (it's in a bug report) |
 |---|---|
-| App info & performance → **Crash logs** | Pending crash report attached to a bug report. |
+| App info & performance → **Crash logs** | Uploaded automatically after a crash, and attached to a bug report. Processing is **not** optional for this type. |
 | App info & performance → **Diagnostics** | Terminal I/O traces, connection/gesture logs, device model, OS, app version. |
 | App activity → **Other user-generated content** | The typed comment + the screenshot / recording frames the user chooses to attach. |
 
@@ -126,7 +126,7 @@ MobiSSH is a mobile-first SSH and SFTP client built for people who actually work
 • SFTP file browser — browse, sort, download and upload files, with per-server path favorites.
 • Stays connected — a foreground service keeps your session and transfers alive in the background; optional keep-alive across sleep.
 • Private by design — your SSH credentials are stored encrypted on your device and are sent only to the servers you connect to. Sessions go directly between your device and your server; nothing routes through us.
-• You control diagnostics — bug reports are never sent automatically. A Review & Send screen lets you preview and exclude the screenshot and diagnostic data before anything leaves your device.
+• You control diagnostics — bug reports are never sent automatically (only crash reports are). A Review & Send screen lets you preview and exclude the screenshot and diagnostic data before anything leaves your device.
 
 No ads. No third-party analytics or trackers. No selling your data.
 ```

@@ -1,6 +1,6 @@
 # Jump host (ProxyJump) — spec
 
-Status: draft, 2026-09-18. Owner-requested. Umbrella issue: see `## Slices`.
+Status: shipped in +187 and +188 (#1183, #1184, #1185, #1189). Open: R6 delete does not name referrers (no confirmation; `referrersOf` is unused), R18 does not offer to create an unresolved hop. Owner-requested. Umbrella issue: see `## Slices`.
 
 ## Goal
 

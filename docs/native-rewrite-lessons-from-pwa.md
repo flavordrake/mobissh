@@ -1,5 +1,7 @@
 # Native Rewrite (#501) — Features That Were Untenable on PWA
 
+> History: the plan below assumed `xterm.dart` and long-press text selection. The shipped app renders through the flterm fork and libghostty, and copy goes through the gutter edge (#962), not body selection. The PWA test paths it cites were removed in #1205.
+
 **Purpose.** Capture the features that consumed disproportionate engineering time on the PWA, and lock them into the Flutter rewrite's integration + acceptance test architecture from the beginning. The PWA's recurring failure mode was discovering platform-shaped bugs only on the user's phone, after headless tests passed. The rewrite must catch each of these classes of bug *before* they reach hardware.
 
 Each feature below lists: what we tried on PWA, why it remained fragile (with code references), how the native architecture sidesteps the failure, and the test coverage that ships **starting in the named phase**, not as a polish step.

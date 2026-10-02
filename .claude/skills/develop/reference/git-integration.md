@@ -2,7 +2,7 @@
 
 ## Branch Naming
 - Develop agent branches: `bot/issue-{N}` (e.g., `bot/issue-16`)
-- One branch per issue, force-pushed on retry
+- One branch per issue, created and pushed via `scripts/bot-branch.sh`; never force-pushed
 
 ## Merge from Main — Do It Often
 The #1 cause of integration pain is drift from main. Merge early, merge often.
@@ -35,7 +35,7 @@ chore: non-functional change (#N)
 ```
 - Reference the issue number with `(#N)` in the commit message
 - Keep the first line under 72 characters
-- One commit per implementation cycle is fine (squash on merge)
+- One commit per implementation cycle is fine
 
 ## PR Creation
 Write body to temp file, then create via gh-ops.sh:
@@ -65,9 +65,9 @@ scripts/gh-ops.sh pr-create --head bot/issue-{N} --title "Issue title" --body-fi
 ## Pre-Push Checklist
 1. `git fetch origin main && git merge origin/main --no-edit`
 2. `scripts/native-fast-gate.sh` — the gate
-3. `npx eslint server/ server-feedback/ public/ test/` — lint
-5. `git diff --stat origin/main` — review your delta
-6. If delta > 200 lines or > 5 files, reconsider scope
+3. `npx eslint server/ server-feedback/ public/ test/` — lint, only if you touched JS
+4. `git diff --stat origin/main` — review your delta
+5. If delta > 200 lines or > 5 files, reconsider scope
 
 ## Recovery Patterns
 

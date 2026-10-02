@@ -2,10 +2,11 @@
 # scripts/test-infra.sh — the repo's infrastructure unit tests (#1205).
 #
 # These cover live, non-Flutter infrastructure that survived the PWA retirement:
-#   server/feedback-guard.js + server-feedback/index.js  (bug-report ingestion)
-#   server/manifest.js                                   (manifest rewriting)
-#   scripts/notify-parse.sh                              (attention notifications)
-#   scripts/trace-*.sh                                   (TRACE tooling)
+#   server/feedback-guard.js, feedback-store.js  (bug-report ingestion)
+#   server-feedback/test.js                      (feedback service round-trips)
+#   scripts/notify-parse.sh                      (attention notifications)
+#   scripts/trace-*.sh                           (TRACE tooling)
+#   scripts/bot-branch.sh, doc-drift.sh, the self-update publish side
 #
 # Runner is node:test, NOT vitest: agent worktrees have no node_modules (it is
 # gitignored and never copied), so a gate step that needs npm deps is exactly
@@ -23,5 +24,5 @@ if ! command -v node >/dev/null 2>&1; then
   exit 1
 fi
 
-echo "> test-infra: node --test test/infra/ (node $(node --version))"
-exec node --test "$@" test/infra/
+echo "> test-infra: node --test test/infra/ server-feedback/test.js (node $(node --version))"
+exec node --test "$@" test/infra/ server-feedback/test.js

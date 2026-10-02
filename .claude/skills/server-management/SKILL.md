@@ -71,9 +71,11 @@ scripts/server-ctl.sh restart   # force restart
 
 ## Test sshd container
 
-A separate Docker Compose file (`docker-compose.test.yml`) runs an sshd container for testing:
+A separate Docker Compose file (`docker-compose.test.yml`) runs an sshd container for
+testing. Bring it up (idempotent; also joins this container to the network):
 ```bash
-docker compose -f docker-compose.test.yml up -d test-sshd   # start test sshd on port 2222
+scripts/test-sshd-up.sh
 ```
 
-Note: test sshd is a simple container with no lifecycle script — raw `docker compose` is acceptable here.
+Reach it as `test-sshd:22` on the `mobissh` Docker network — never `localhost:2222`
+(port mapping does not work here). Test scripts use `scripts/lib/testsshd-fixture.sh`.

@@ -29,9 +29,9 @@ It runs scripts/native-fast-gate.sh, eslint, and the source/test coverage check 
 
 After the script finishes, report:
 - Branch name
-- Issue number (from branch name pattern `bot/issue-{N}` or legacy `claude/issue-{N}-{DATE}-{TIME}`)
+- Issue number (from branch name pattern `bot/issue-{N}`)
 - Exit code (0 = pass, 1 = fail, 2 = setup error)
-- The summary line from the output (starts with `+ FAST GATE PASSED` or `! FAST GATE FAILED`)
-- If failed: the `native: X | eslint: X | coverage: X` line
+- The summary line from the output (`+ GATE PASSED: <branch>` or `! GATE FAILED: <branch>`)
+- The `native: X | eslint: X | coverage: X` line that follows it
 
 That's it. Do not do anything else.

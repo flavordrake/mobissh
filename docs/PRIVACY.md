@@ -39,8 +39,18 @@ proxy or relay in this path and cannot see this content.**
 If — and only if — you tap **Send bug report** (or **Share feedback**), the app
 assembles a diagnostic bundle and uploads it to the developer's diagnostics
 endpoint (or, for **Share feedback**, hands it to your device's share sheet so
-*you* choose where it goes). This is always an explicit, per-report action; the
-app never uploads anything in the background.
+*you* choose where it goes). This is always an explicit, per-report action.
+
+**Crash reports are the exception to the exception.** If the app crashes, it
+saves a crash report (the error message, stack trace, device model, OS and app
+version; it does not collect terminal output or credentials, though an error
+message can quote what the app was handling, such as a file name) and uploads it to the same diagnostics
+endpoint on the next launch or the next successful connection, without asking.
+
+**Update checks.** A sideloaded copy of the app reads a small version file from
+the developer's distribution host on start, on resume and from Settings →
+Updates, to offer newer builds. The request carries nothing about you or your
+sessions. The Play Store build does not include this.
 
 **A bug report may contain:**
 - a **screenshot** of the app at the moment you report, and short recent frames;
@@ -86,7 +96,7 @@ password-, token-, and key-looking strings from the text logs — but this is
 - No third-party analytics, tracking, or profiling SDKs.
 - No selling, renting, or sharing of your data.
 - No background collection or transmission of your session content, credentials,
-  or usage.
+  or usage. The only automatic upload is the crash report described in section 3.
 
 ## 6. Children
 

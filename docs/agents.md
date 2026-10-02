@@ -1,33 +1,31 @@
 # Custom Subagents
 
-Design document for MobiSSH's custom Claude Code subagents.
+Design document for MobiSSH's subagent prompt templates in `.claude/agents/`.
 
-## Problem
+## How agents are spawned
 
-Claude Code's built-in `general-purpose` subagent does not inherit the parent session's
-permission allow-list (`.claude/settings.json`). Background subagents auto-deny any tool
-call not pre-approved before launch. Since there is no approval UI for background tasks,
-Write and Bash calls fail silently and the agent returns asking for permissions it can
-never receive.
+Every agent is spawned with `subagent_type: "general-purpose"` (`.claude/rules/agents.md`);
+the `.claude/agents/*.md` files are prompt templates whose body is inlined into the
+prompt. Behaviour is controlled with Agent tool parameters (`isolation`,
+`run_in_background`), and no `model` parameter is passed (agents inherit the parent
+model and its permissions; CLAUDE.md). The frontmatter below documents each template's
+intended tools and mode; it takes effect only when the template is used as a native
+custom agent type.
 
-This broke the `/issue` skill, which was designed to run as a background Task. Both
-attempts (filing #158 and updating #55) failed identically:
-1. Agent calls Write to create `/tmp/issue-body.md` -> denied
-2. Agent calls Bash to run `scripts/gh-ops.sh version` -> denied
-3. Agent returns a message requesting approval with no way to get it
+| Agent | subagent_type | isolation | run_in_background |
+|-------|---------------|-----------|-------------------|
+| delegate-scout | general-purpose | (none) | false |
+| issue-manager | general-purpose | (none) | true |
+| integrate-gater | general-purpose | worktree | true |
+| develop | general-purpose | worktree | true |
 
-The root cause: `general-purpose` is a built-in agent type with no project-specific
-permission configuration. It doesn't know about `Bash(scripts/*)` or `Bash(gh *)`.
+## Problem these solved
 
-## Solution
-
-Filesystem-based custom agents defined in `.claude/agents/`. Per the
-[subagent docs](https://code.claude.com/docs/en/sub-agents), these support:
-- `tools` field: explicit tool allowlist
-- `permissionMode` field: `default` inherits parent's allow-list
-- `skills` field: preloads skill content into agent context (no discovery needed)
-- `background` field: always runs as background task
-- `model` field: can use cheaper models for mechanical tasks
+Background subagents auto-deny any tool call not pre-approved before launch; there is no
+approval UI for background tasks. The `/issue` skill, designed to run in the background,
+failed this way (Write to a temp body file denied, then `scripts/gh-ops.sh version`
+denied). The templates pin a narrow tool list so a background agent only needs what it
+was granted.
 
 ## Agents
 
@@ -35,118 +33,74 @@ Filesystem-based custom agents defined in `.claude/agents/`. Per the
 
 **Purpose:** File GitHub issues, add comments, manage labels. Executes the /issue skill.
 
-**Why it needs its own agent:** Issue filing is mechanical (gather context, compose body,
-call script) and should not block the main conversation. The /issue skill was designed
-for background execution but failed with the built-in general-purpose agent.
+**Frontmatter:** tools Write, Bash, Read, Grep, Glob; model `sonnet`;
+permissionMode `bypassPermissions`; skills `issue`.
 
-**Decision: permissionMode `bypassPermissions`**
-Originally chose `default` (inherits parent's allow-list), but background agents with
-`default` still get prompted for permissions and auto-denied since there's no UI.
-Switched to `bypassPermissions`. Risk is mitigated by the `tools` field restricting
-each agent to only the tools it needs.
+**Why its own agent:** issue filing is mechanical (gather context, compose body, call
+script) and should not block the main conversation. Spawned in the background.
 
-**Decision: model `haiku` vs `inherit`**
-Chose `haiku`. Issue filing is template-driven: parse trigger, gather version, compose
-body, call script. No complex reasoning needed. Haiku is faster and cheaper.
+**Decision: `bypassPermissions`.** Background agents with `default` still get prompted
+and auto-denied. Risk is bounded by the `tools` list.
 
-**Decision: stdin heredoc vs Write-to-tempfile**
-Both paths work. The scripts (`gh-file-issue.sh`, `gh-ops.sh`) already accept stdin.
-A heredoc piped to the script (`scripts/gh-file-issue.sh <<'EOF'...`) matches
-`Bash(scripts/*)` and avoids needing Write entirely. The skill documents both paths:
-Write tool preferred (cleaner), heredoc as fallback.
-
-**Tools:** Write, Bash, Read, Grep, Glob
-**Skills:** issue
-**Background:** true
-**Model:** haiku
+**Decision: Write-to-tempfile.** The body is written with the Write tool and passed via
+`--body-file` to `scripts/gh-file-issue.sh` / `scripts/gh-ops.sh`; no heredocs.
 
 ### delegate-scout
 
 **Purpose:** Run the deterministic discovery and classification phases of /delegate
-(Phases 1-3: discover, classify, fetch bodies, failure analysis). Returns structured
-data for the main conversation to analyze and present.
+(discover, classify, failure analysis, fetch bodies). Returns structured data for the
+main conversation to analyze and present.
 
-**Why it needs its own agent:** Discovery involves running 3-4 scripts that each take
-5-15 seconds and produce JSON. This is pure data gathering with no decisions. Running
-it in background lets the user keep working while data accumulates.
+**Frontmatter:** tools Bash, Read, Grep, Glob. No model, permissionMode or background
+fields.
 
-**What it does NOT do:** Phase 4+ (gap analysis, plan composition, user approval,
-execution) stays in the main conversation. The scout gathers; the main agent decides.
+**What it does NOT do:** gap analysis, plan composition, user approval, execution. The
+scout gathers; the main agent decides. It runs in the foreground because /delegate
+waits on its results.
 
-**Decision: not preloading /delegate skill**
-The delegate skill is large and most of it (Phases 4-7) is irrelevant to the scout.
-The agent's system prompt contains only the discovery/classification workflow.
-
-**Tools:** Bash, Read, Grep, Glob (no Write needed, scripts output to /tmp)
-**Background:** true
-**Model:** haiku
+**Decision: not preloading /delegate.** Most of the skill is irrelevant to the scout;
+its prompt contains only the discovery/classification workflow.
 
 ### integrate-gater
 
-**Purpose:** Run fast-gate validation on bot branches. Executes `scripts/integrate-gate.sh`
-against one or more branches and returns pass/fail results.
+**Purpose:** Run `scripts/integrate-gate.sh <branch>` (native fast gate, eslint, the
+source/test coverage check) on one bot branch and report the result.
 
-**Why it needs its own agent:** Fast-gating involves checking out a branch, running
-the native gate + eslint + the coverage check, and restoring state. Multiple
-branches can be gated in parallel using separate agent instances.
+**Frontmatter:** tools Bash, Read; model `sonnet`; permissionMode `bypassPermissions`.
 
-**What it does NOT do:** Merge decisions, acceptance testing (emulator), label management.
-Those stay in the main conversation.
+**What it does NOT do:** merge decisions, on-emulator acceptance, label management.
 
-**Decision: isolation `worktree`** (adopted)
-Each gate agent runs with `isolation: "worktree"`, giving it an isolated copy of the repo.
-The gate script detects worktree mode via `git rev-parse --git-dir` vs `--git-common-dir`
-and skips stash/restore when isolated. This resolved git lock contention from parallel agents.
+**Decision: isolation `worktree`.** Each gater gets its own copy of the repo. The gate
+script detects worktree mode (`git rev-parse --git-dir` vs `--git-common-dir`) and skips
+stash/restore. This removed git lock contention between parallel gaters. Max 2 at once.
 
-**Tools:** Bash, Read, Grep, Glob (no Write, no Edit)
-**Background:** true
-**Model:** sonnet (upgraded from haiku -- haiku went off-script and ran full Playwright)
+### develop
+
+**Purpose:** Implement one GitHub issue end to end on `bot/issue-N`: TDD, merge from
+main, gate inside its worktree, push, open the PR, populate a TRACE. Spawned by
+`/develop`.
+
+**Frontmatter:** tools Bash, Read, Edit, Write, Glob, Grep; model `sonnet`;
+permissionMode `bypassPermissions`.
+
+**Limits:** isolation `worktree` (mandatory), max 4 in parallel, 3 implementation
+cycles, 1-hour wall clock. Failures are appended to `memory/bot-attempts.md`.
 
 ## Agents NOT created
 
-### Full delegate agent
-/delegate requires user approval at every decision point (Phase 6 plan, Phase 7
-execution). Must stay foreground. The delegate-scout handles only the data-gathering
-prefix.
+- **Full delegate agent:** /delegate needs user approval at every decision point; it stays
+  foreground. The scout handles only data gathering.
+- **Full integrate agent:** merge decisions need user oversight. The gater handles only
+  the mechanical validation step.
+- **Release agent:** version bumps, tags and GitHub releases all need user confirmation.
 
-### Full integrate agent
-Merge decisions need user oversight. Must stay foreground. The integrate-gater handles
-only the mechanical validation step.
+## Worktree path matching caveat
 
-### Release agent
-Too consequential for background. Version bumps, changelogs, git tags, GitHub releases
-all need user confirmation.
-
-## Permission model
-
-```
-Parent session (.claude/settings.json)
-  Bash(scripts/*), Bash(gh *), Bash(git *), Bash(npm *), ...
-      |
-      v (permissionMode: default = inherits)
-Custom agent (.claude/agents/*.md)
-  tools: [Write, Bash, Read, Grep, Glob]
-  -> Agent can call Write (inherited allow)
-  -> Agent can call Bash with scripts/* (inherited allow)
-  -> Agent CANNOT call Edit (not in tools list)
-```
-
-Built-in general-purpose agent does NOT follow this inheritance path. It runs with
-a blank permission slate and auto-denies everything in background mode.
-
-### Worktree path matching caveat
-
-`Bash(scripts/*)` matches **relative to CWD**. When an agent runs with
-`isolation: "worktree"`, its CWD is `.claude/worktrees/agent-{id}/`. If the LLM
-uses an absolute path (e.g., `/home/dev/workspace/mobissh/scripts/foo.sh`), the
-relative pattern does NOT match — even with `permissionMode: bypassPermissions`.
-
-**Fix:** Add absolute path patterns to `.claude/settings.json`:
-```json
-"Bash(//home/dev/workspace/mobissh/scripts/*)",
-"Bash(//home/dev/workspace/mobissh/.claude/worktrees/*/scripts/*)"
-```
-And instruct agents to prefer relative paths in their system prompts.
+`Bash(scripts/*)` matches **relative to CWD**. An agent with `isolation: "worktree"`
+runs in `.claude/worktrees/agent-{id}/`; an absolute path such as
+`/home/dev/workspace/mobissh/scripts/foo.sh` does not match the relative pattern. Agents
+are told to use relative `scripts/*` paths, and the gate must run from the worktree's
+own copy so it tests the agent's changes.
 
 ## File locations
 
@@ -154,14 +108,15 @@ And instruct agents to prefer relative paths in their system prompts.
 .claude/agents/
   issue-manager.md        # files issues, comments, labels
   delegate-scout.md       # discovery + classification data gathering
-  integrate-gater.md      # fast-gate bot branches
+  integrate-gater.md      # gates one bot branch
+  develop.md              # implements one issue on bot/issue-N
 ```
 
 ## Related
 
-- `.claude/skills/issue/SKILL.md` -- updated to invoke issue-manager agent
-- `.claude/skills/delegate/SKILL.md` -- updated to invoke delegate-scout for Phases 1-3
-- `.claude/skills/integrate/SKILL.md` -- updated to invoke integrate-gater for Step 3
-- `scripts/gh-file-issue.sh` -- stdin + --body-file wrapper for gh issue create
-- `scripts/gh-ops.sh` -- comment, labels, close, search, version wrapper
-- `.claude/settings.json` -- parent permission allow-list that agents inherit
+- `.claude/skills/issue/SKILL.md`, `.claude/skills/delegate/SKILL.md`,
+  `.claude/skills/integrate/SKILL.md`, `.claude/skills/develop/SKILL.md` — the skills that
+  spawn these agents
+- `scripts/gh-file-issue.sh` — `--body-file` wrapper for issue creation
+- `scripts/gh-ops.sh` — comment, labels, close, search, delegate, integrate, release
+- `.claude/rules/agents.md` — spawning table, parallel limits, repo-safety rules

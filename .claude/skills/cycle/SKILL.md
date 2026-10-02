@@ -194,7 +194,7 @@ Per `.claude/process.md`:
 
 ## Rules
 
-- max 3 parallel develop agents
+- max 4 parallel develop agents (`.claude/rules/agents.md`)
 - Theme filter is additive — issues without theme keywords are shown but deprioritized
 - Never develop `human-only` issues — report them as "needs device testing"
 - Worktree cleanup deferred to release — do NOT clean while agents might be active

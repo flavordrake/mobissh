@@ -80,13 +80,13 @@ describe('trace-symbol-history.sh', () => {
   });
 
   it('finds commits that added/removed a known symbol', () => {
-    // rewriteManifest is a live function in server/manifest.js
-    const out = run('trace-symbol-history.sh', ['rewriteManifest']);
+    // isNativeDistArtifact is a live function in server/index.js
+    const out = run('trace-symbol-history.sh', ['isNativeDistArtifact']);
     assert.match(out, /[0-9a-f]{7,}/);
   });
 
   it('supports --file scope filter', () => {
-    const out = run('trace-symbol-history.sh', ['rewriteManifest', '--file', 'server/manifest.js']);
+    const out = run('trace-symbol-history.sh', ['isNativeDistArtifact', '--file', 'server/index.js']);
     assert.match(out, /[0-9a-f]{7,}/);
   });
 

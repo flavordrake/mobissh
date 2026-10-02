@@ -1,5 +1,7 @@
 # Image/Binary Clipboard Paste-Through Research
 
+> History: written against the retired PWA (xterm.js, the WebSocket bridge, `src/`, Playwright/Appium), which #1205 removed. Read "current" here as "current when written"; the native app is the product (see README.md and developer.md).
+
 Research for issue #216: supporting image/binary clipboard paste-through for AI TUI tools
 (Claude Code) running over SSH in MobiSSH.
 

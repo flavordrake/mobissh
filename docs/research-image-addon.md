@@ -1,5 +1,7 @@
 # Research: xterm.js ImageAddon for Image Passthrough
 
+> History: written against the retired PWA (xterm.js, the WebSocket bridge, `src/`, Playwright/Appium), which #1205 removed. Read "current" here as "current when written"; the native app is the product (see README.md and developer.md).
+
 Research spike for issue #3. Evaluates `@xterm/addon-image` for inline image
 display in MobiSSH's terminal.
 

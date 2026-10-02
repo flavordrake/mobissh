@@ -72,11 +72,11 @@ git checkout -b bot/test-{description} origin/main
 ### What makes a good test
 - Descriptive name that documents the expected behavior
 - Single assertion per logical concern
-- No force:true, no extended timeouts, no sleep-based assertions
+- No extended timeouts, no sleep-based assertions
 - Tests that would catch a regression if someone broke the feature
 
 ### Do NOT
-- Modify application code (ui.ts, ime.ts, connection.ts, server, etc.)
+- Modify application code (`native/lib/`, `native/third_party/`, `server/`, `server-feedback/`)
 - Add npm dependencies
 - Write tests for test infrastructure
 

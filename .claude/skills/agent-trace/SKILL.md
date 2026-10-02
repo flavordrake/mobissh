@@ -82,20 +82,20 @@ require code changes or special setup. Capture raw output to `telemetry/`.
 Run Nsight Compute, Nsight Systems, or compute-sanitizer. Save raw output to
 `telemetry/` and bottleneck summary to `logs/`.
 
-#### Web/PWA tasks (MobiSSH)
+#### Native app tasks (MobiSSH)
 
 | File | What to capture | Tool |
 |------|----------------|------|
 | `telemetry/perf-before.txt` | Test suite duration before changes | the `flutter test` duration line |
 | `telemetry/perf-after.txt` | Test suite duration after changes | the `flutter test` duration line |
 | `telemetry/apk-size.txt` | Shipped artifact size | `ls -la public/mobissh-native.apk` |
-| `telemetry/page-metrics.json` | Layout count, style recalcs, heap | Playwright `page.metrics()` |
-| `telemetry/transfer-trace.log` | Chunk timing, ack latency | App's built-in transfer tracing |
+| `telemetry/paint-stats.txt` | Frame/damage accounting | paint-stats (`native/lib/diagnostics/paint_stats.dart`), `scripts/paint-replay.sh` |
+| `telemetry/byte-trace.log` | Chunk timing, throughput | byteTrace in the bug-report bundle |
 
 **When to capture more than just test duration:**
-- Terminal rendering changes → page metrics (layout thrashing)
-- SFTP/WebSocket changes → transfer tracing (throughput, ack-wait %)
-- UI changes → bundle size + page metrics
+- Terminal rendering changes → paint-stats
+- SFTP/connect changes → byte tracing (throughput, stalls)
+- Build changes → APK size
 - All changes → test suite duration (always)
 
 ### Step 3: The Pivot (The Delta)
@@ -126,13 +126,13 @@ The final act of a TRACE agent is to populate the body of `TRACE.md` with:
   "touchstart preventDefault on a scroll container blocks horizontal scroll").
 - **Performance Delta**: One-line summary of before/after performance impact.
   Reference `telemetry/perf-before.txt` and `telemetry/perf-after.txt`.
-  (e.g., "Test suite: 7.5s → 7.9s (+5%, from new 14 Playwright tests)",
-  "Bundle: connection.js 12KB → 14KB (+2KB, transfer tracing instrumentation)",
+  (e.g., "flutter test: 7.5s → 7.9s (+5%, from 14 new widget tests)",
+  "APK: 31.2MB → 31.4MB (+0.2MB, new viewer)",
   "No measurable impact" is a valid and valuable result.)
 - **Security Summary**: One-line summary of static analysis findings.
   Reference `logs/security-findings.md`.
   (e.g., "semgrep: 0 new findings on changed files",
-  "1 innerHTML usage in _renderTransferList — uses escHtml, accepted",
+  "1 WebView loadHtmlString of remote content — sandboxed, accepted",
   "No security-relevant changes".)
 - **Outcome Classification**: `success` | `failure` | `partial` — and a shade:
   - `success` — tests pass, no regressions, no security concerns
@@ -186,8 +186,9 @@ updates and process improvements.
 
 ### Automatic TRACE signals (PostToolUse hook)
 
-A PostToolUse hook (`.claude/hooks/trace-signal.sh`) fires on every Write/Edit and
-detects writes to **decision-signal paths**:
+A PostToolUse trace-signal hook, registered by the devloop plugin (not by this repo's
+`.claude/settings.json`; the copy at `.claude/hooks/trace-signal.sh` is unregistered),
+fires on every Write/Edit and detects writes to **decision-signal paths**:
 
 | Path pattern | Signal | Meaning |
 |---|---|---|
@@ -227,14 +228,19 @@ scripts/trace-init.sh "objective-slug"
 # With: TRACE.md, specs/, strategy/, logs/, telemetry/, artifacts/
 ```
 
-### scripts/trace-validate.sh
+### scripts/trace-audit.sh
 
-Validate that a TRACE is complete:
+Audit every TRACE in `.traces/` for completeness and print a pass/fail table:
 
-- `TRACE.md` has frontmatter with status
-- `strategy/initial_plan.md` exists
-- If pivots exist, each has triggering evidence and delta
-- If telemetry exists, it has corresponding strategy references
+- `TRACE.md` exists, is populated and has a status
+- `strategy/initial_plan.md` exists and has content
+- Knowledge seeds, outcome classification and decisions are present
+
+### scripts/trace-check.sh
+
+Check the active TRACE (auto-detected from `CLAUDE.md`, or pass a directory): last
+update, commits since, recently modified files that may need documenting, missing
+sections.
 
 ## 7. Fractal TRACE Architecture
 

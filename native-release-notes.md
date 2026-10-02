@@ -3,13 +3,21 @@
 Curated, USER-FACING notes rendered on the install page (native.html). Newest
 section first; the generator renders the TOP section's bullets as "What to
 verify". Each bullet: ONE short line, what changed — NOT how to test it. Keep
-internal/test/CI/refactor work OUT. **Update this every release** (the gate
-refuses to ship if the top section's commit is older than the build — see
-gen-apk-install-page.sh staleness check).
+internal/test/CI/refactor work OUT. **Update this every release** (gen-apk-install-page.sh
+warns when native/lib has commits newer than this file).
+
+## v0.1.12-rc.4+197 (2026-10-01) — self-update, safe host-key changes, SFTP download fix
+- **SFTP downloads no longer truncate.** Files over 32 KiB used to arrive cut short with a success message. Every download (browser, viewer Download/Share, PDF and image viewers, editor load) now checks the bytes received against the server's size and fails loudly on a mismatch. (#1225) **Device-test:** download a file over 100 KB; edit and save a markdown file over 32 KB.
+- **One-time "Re-confirm host key" for each saved host.** The SSH library moved to dartssh2 4.1.0 and fingerprints are now SHA256, so every saved host (jump hops too) asks once. Errors for legacy algorithms and rekeys are readable now, and a server-sent disconnect keeps auto-reconnect. (#1226) **Device-test:** compare each prompt with `ssh-keygen -l -f /etc/ssh/ssh_host_<type>_key.pub` on the server.
+- **A changed host key can be re-trusted safely.** The Disconnected banner and the profile row offer "Host key changed — Review": both fingerprints in full, a MITM warning, Cancel by default. "Forget old key and reconnect" drops only that host:port and you get the ordinary first-contact prompt; the new key is never trusted in one tap. (#1235) **Device-test:** change a test server's host key and walk the Review path.
+- **The app updates itself.** A sideloaded arm64 install spots a newer published build and updates with one tap, from a home-screen banner or Settings → Updates. The download is checked against the published sha256, and its package name and signing certificate must match the running app; anything else is refused and deleted. Not in the Play build. (#1214, #1215, #1216) **Device-test:** take the in-app update from one build to the next.
+- **New file in the file browser.** Beside New folder in the toolbar, and on long-press of a folder (inside it) or a file (next to it). The name starts as README.md, and an existing name is refused, never overwritten. (#1222) **Device-test:** create a file from each entry point.
+- **The file editor has the full keyboard back.** Glide typing, the suggestion strip and the voice key work in the editor again. (#1221) **Device-test:** edit a .md, glide-type and dictate, save, reopen.
+- **Deep links can open a specific tmux window.** `mobissh://…tmux=main&window=<name>` lands on that window, switching over a separate channel without typing into your terminal. A missing window shows a notice and nothing is created. (#1211) **Device-test:** tap a link for a named window.
+- **New app icon.** A green hexagon ring with a `>_` mark. **Device-test:** check the launcher icon after updating.
 
 ## v0.1.12-rc.4 (2026-09-19) — jump hosts, an editable markdown viewer, per-profile link browser
-- **Choose which browser a detected link opens in, per profile.** Settings picks the app-wide default; a profile can override it (Profile editor → Open links in), so work hosts can send links to a work browser while everything else keeps your normal one. Links in viewed markdown/HTML files follow the same choice. If the chosen browser isn't installed any more, the link still opens in the default and tells you which one was missing. (#1195) **Device-test:** set a profile to one browser and the global default to another, then open a link from each.
-- **Connect through a bastion.**
+- **Choose which browser a detected link opens in, per profile.** Settings picks the app-wide default; a profile can override it (Profile editor → Browser for links), so work hosts can send links to a work browser while everything else keeps your normal one. Links in viewed markdown/HTML files follow the same choice. If the chosen browser isn't installed any more, the link still opens in the default and tells you which one was missing. (#1195) **Device-test:** set a profile to one browser and the global default to another, then open a link from each.
 - **Paste an ssh_config block with `ProxyJump` and the jump host comes with it.** Alias hops resolve against your saved profiles; `user@host:port` hops and the legacy `ProxyCommand ssh -W %h:%p` spelling work too. A hop it can't resolve blocks the import rather than quietly importing a profile that would connect straight to the target. (#1184) **Device-test:** paste a real Host block that uses a bastion.
 - **Export your profiles as an ssh_config file.** From the Connect screen — it contains no passwords, keys or passphrases, and names any profile you'll need to configure a key for by hand. (#1185) **Device-test:** export and read the file.
 - **A jumped session shows a route glyph on its title** — tap it for the full path, every hop in order then the target. A direct session looks exactly as before. (#1189) **Device-test:** tap the glyph, and check the session bar still swipes between sessions and taps open the menu.
@@ -18,7 +26,7 @@ gen-apk-install-page.sh staleness check).
 - **Markdown source now wraps.** The raw/source view no longer runs off the right edge — long paragraphs fold to the screen instead of needing a sideways pan. (#1177) **Device-test:** open a `.md` with long lines and tap the source toggle.
 - **Markdown files are editable.** Tap the pencil in the viewer, edit the source, Save — it writes back over SFTP to the same file. A failed save keeps what you typed and shows a Retry you can act on; backing out with unsaved edits asks first. (#859) **Device-test:** edit and save a real file, then reopen it; also try saving with the connection dropped.
 - **Link highlighting has options.** The Session menu's link-highlight entry now opens a sheet: **intensity** (low / medium / high) for how much colour and noise the overlay adds, which **side** the gutter sits on, and whether it **overlays the last column or takes a dedicated one**. (#1154, #1155) **Device-test:** switch the gutter to the left and confirm the chips AND the long-press line-select strip both move; then try dedicated-column mode and check the text reflows clear of the strip.
-- **`mobissh://` links open the app.** Connect, send a command, or open a file from a link elsewhere on the phone. (#1117) **Device-test:** tap a `mobissh://connect?name=…` link for a saved profile.
+- **`mobissh://` links open the app.** Connect to a saved profile, or attach a tmux session, from a link elsewhere on the phone. (#1117) **Device-test:** tap a `mobissh://connect?name=…` link for a saved profile.
 - **Images preview in the file browser.** PNG/JPEG/GIF open in a pinch-zoomable viewer; animated GIFs play. (#1093)
 
 ## v0.1.12-rc.3 (2026-08-22) — encrypted backup: export + import everything

@@ -1,120 +1,99 @@
 # MobiSSH
 
-Mobile command and control for coding agents over SSH. Swipe-type prompts, dictate instructions, manage tokens and URLs -- all from your phone, with the full power of a real terminal underneath.
+A mobile-first SSH and SFTP client for driving coding agents and servers from a phone. The app speaks SSH directly (dartssh2) with no relay and no proprietary protocol, so Claude Code, Codex, OpenCode or anything else runs in its normal shell on your host. Terminal rendering uses libghostty.
 
-> **The PWA web app was retired in #1205.** MobiSSH is the native app; install it from
-> `/native.html` on the tailnet host (the root `/` redirects there). The feature prose
-> below describes the UX the native app carries forward — where it names browser
-> internals, read it as history.
+Android is the primary platform; Linux and macOS desktop builds exist.
 
-> **Standard SSH, mobile-native UX.** The app speaks SSH directly (dartssh2). No command interception, no proprietary protocol. Your agents (Claude Code, OpenCode, Gemini CLI, Codex) run in their normal SSH environment.
+## Features
 
-## The workflow
+### Terminal that understands its output
 
-You're on your phone. You have an idea, a bug report, a task for your coding agent. You want to tell it what to do, review its output, iterate -- without opening a laptop.
+- **Link, path and command detection.** URLs, absolute and relative file paths, and shell command lines in the output get a soft colour wash under the text (the glyphs stay full contrast) and a chip in the gutter at the screen edge. Settings → Detection turns each type on or off.
+- **Tap to act.** Tap a URL to copy it. Tap a path or `file://` link to open the file browser at that folder. Tap a command's gutter chip to copy the whole command. Long-press (with mouse mode on) or tap a chip for the full menu: Open, Copy, the `sftp://` form, and "Not a URL / Not a file" to stop detecting that exact text.
+- **Verified paths.** A detected path turns a bolder shade once the app has checked over SFTP that it exists on the host. Short and relative paths stay hidden until they verify, so stray words don't light up.
+- **Detection Lab.** Pick colours and intensity per pattern with live previews, edit the command lexicon, and add your own regex patterns with a sample line and a live compile check (Settings → Detection lab).
+- **Highlight options.** The detection icon in the session menu opens a sheet: on/off, intensity (low, medium, high), gutter side (left or right), and whether the gutter overlays the last column or takes its own.
+- **Browser per profile.** Choose which installed browser opens links, app-wide or per profile (work hosts can open in a work browser). If the chosen browser is gone, the link opens in the default and says which one was missing.
+- **Copy whole lines from the gutter.** Long-press the gutter strip and drag to pick visible lines; they are copied on release.
 
-**Compose mode** is the core of this. Tap the compose button, and MobiSSH switches from raw terminal input to a native mobile text field. Swipe-type a multi-sentence prompt. Dictate a paragraph with voice input. Edit, review, then send. The agent receives clean text, not the garbled output of autocorrect fighting a terminal emulator.
+### Built for touch and tmux
 
-**Direct mode** is always one tap away for when you need raw keystrokes -- navigating tmux, scrolling agent output, sending Ctrl-C to stop a runaway process.
+- **Swipe to scroll.** With tmux mouse mode on, a vertical swipe scrolls tmux's history; in a plain shell it scrolls the local scrollback. Scrolling moves by whole rows.
+- **Swipe between tmux windows.** A horizontal swipe goes to the previous or next window, and tapping a window name in the status line selects it. These use tmux's default mouse bindings, so no prefix or custom keys are needed.
+- **Keybar.** Esc, sticky Ctrl, Tab, arrows, Home, End, PgUp, PgDn, Paste, ^C, ^Z, ^B, ^D, and a Reset key that clears a stuck mouse mode locally.
+- **Compose bar.** A floating text box where swipe typing, voice dictation and autocorrect work. Send a line or a multi-line paste, and recall earlier entries per session.
+- **Multiple sessions.** Swipe the session bar to switch. Sessions survive the app going to the background (an Android foreground service keeps them alive) and reconnect on resume if they dropped.
+- **Notifications.** A terminal bell, OSC 9 or OSC 777 from a background session raises a notification; tapping it opens that session and, for tmux, the window that rang. [INTEGRATION.md](INTEGRATION.md) shows how to make Claude Code, Codex, Gemini CLI or OpenCode ring when they need you.
+- **tmux control mode (experimental).** An opt-in setting attaches with `tmux -CC` and switches windows with real tmux commands. Off by default; scrollback does not render in this mode yet.
 
-### What you can do from your phone
+### SFTP client with round-trip editing
 
-**Drive coding agents.** Launch `claude`, `opencode`, `gemini`, or `codex` over SSH. Compose long prompts with swipe or voice. Review diffs in the terminal. Approve or reject changes. The full agent TUI renders correctly -- xterm.js is the same engine as VS Code's terminal.
+- **Browse** any folder on the host, with sort by name, date, size or type (saved per profile), favourites, back history, and a per-profile start folder.
+- **Create** a new folder or a new file (it never overwrites an existing name).
+- **Download and share** files; downloads check the received size against the server's and fail loudly on a mismatch.
+- **Upload** from the phone, resuming from where an interrupted upload stopped.
+- **View** Markdown (rendered, with Mermaid diagrams and inline images), text and code, PDF, HTML, and images (PNG, JPEG, GIF), with pinch-zoom where it makes sense.
+- **Edit Markdown and save it back** over SFTP, with the full phone keyboard (swipe and voice included). A failed save keeps your text and offers Retry; leaving with unsaved edits asks first.
 
-**Multi-session.** Connect to multiple SSH hosts simultaneously. Each session has its own per-profile theme for instant visual context switching between dev containers. Swipe the session title to switch. Sessions auto-reconnect on resume -- background sessions that drop are detected and restored when you switch to them. Animated status bar shows connection state (solid when connected, shimmering during reconnect, dimmed when disconnected).
+### Profiles, keys and connections
 
-**Transfer files.** Browse, upload, download, and rename files on the remote machine via the SFTP panel. Chunked streaming with byte-level progress, cancel, and resume after reconnect. Quick preview for images (with pinch-zoom), SVG, markdown, text, HTML, and video files inline. Upload screenshots or logs directly to where your agent can read them. Per-session file browsing — each session has its own SFTP state.
+- **Profiles** with host, port, user, password or key, an initial command to run after connecting, a start folder, a theme, a link browser and an optional jump host.
+- **Paste an `~/.ssh/config` Host block** to fill a profile, including `ProxyJump`. Export your profiles as an ssh_config file (no secrets in it).
+- **Jump hosts.** A profile can connect through another saved profile, like `ssh -J`, up to 3 hops, each with its own credentials and host-key check. Jumped sessions show a route icon that lists the hops.
+- **SSH key library.** Paste a key once, name it, and attach it to any number of profiles. View and copy the public key.
+- **Host keys.** First contact asks you to trust the fingerprint. A changed key refuses to connect and offers a Review screen with both fingerprints; the new key is never trusted in one tap.
+- **Port forwarding.** Local forwards (`ssh -L`, bound to 127.0.0.1), optionally re-armed on every connect.
+- **Encrypted backup.** Export everything (profiles, passwords, keys, host-key trust, settings) to one passphrase-encrypted file, and import it on another device.
+- **`mobissh://` links.** Other apps can open a saved profile, attach a tmux session, or select a tmux window. The app asks before a link connects, unless you allowed that profile.
+- **Themes and fonts.** 38 terminal palettes (per profile, or per session from the session menu) and 6 bundled monospace fonts with adjustable size.
+- **Tablets.** In a large landscape window the session bar moves to the top and the keybar hides by default.
 
-**Manage credentials.** Vault-encrypted credential storage (AES-GCM, PBKDF2 600k iterations) with biometric unlock. SSH key passphrases persist in the vault across page reloads — no re-entry needed. Export/import profiles for device migration (metadata only, no secrets). Inline per-profile editing with auto-save and undo.
+## Install
 
-**Navigate the terminal.** Hamburger menu opens top-level navigation (Terminal, Connect, Settings). Session controls (theme, reset, files, notifications, disconnect) accessible via the session title button. Swipe vertically to scroll output. Swipe the session title horizontally to switch sessions. Pinch to zoom the font. One-tap key bar for Ctrl, Esc, Tab, arrows, PgUp/PgDn. All designed for one-handed phone use.
+Download the APK from the [GitHub releases](https://github.com/flavordrake/mobissh/releases) page and install it (Android asks you to allow installing from your browser or file manager). Release builds are arm64. A macOS build is attached to some releases.
 
-**Get notified.** Terminal bells and coding agent hooks alert you when your agent needs input. Notification badge on the session title with a reviewable notifications modal (tap 🔔 in session menu). Notifications merge into a single Android notification (no stacking) with actionable content — tool names, file paths, not boilerplate. See [INTEGRATION.md](INTEGRATION.md).
+## Server setup for touch, mouse and scroll
 
-## Security
-
-See [SECURITY.md](SECURITY.md) for the full security model, threat assessment, and audit history.
-
-Summary: MobiSSH is designed for personal use over Tailscale (WireGuard mesh). Credentials are AES-GCM encrypted with biometric unlock (Chrome/Android). No plaintext fallback, ever. The bridge forwards raw bytes with no telemetry.
-
-Automated security audit via `scripts/security-audit.sh` — runs semgrep (static analysis) with Gemini and Codex (AI-assisted review). Accepted findings documented in `test-history/security/accepted.json`.
-
-## Architecture
+MobiSSH needs nothing installed on the server beyond `sshd`. Touch scrolling and window swiping inside tmux use tmux's mouse support, which is off by default. Turn it on:
 
 ```
-Native app --(SSH)--> Target server
-
-Node.js server (port 8081, Tailscale) -- install page, APK/AAB artifacts,
-                                         bug-report + telemetry relay,
-                                         Claude Code approval bridge
+# ~/.tmux.conf
+set -g mouse on
+set -g history-limit 5000
+set -g window-size latest
 ```
 
-- **`native/`** -- the Flutter app: the product
-- **`server/index.js`** -- single Node.js process: static files (`public/`, `native-dist/`), `/api/bug-report` and friends, `/api/approval*` + the `/events` SSE channel
-- **`server-feedback/`** -- the feedback-service container that `server/index.js` relays to
-- **`public/native.html`** -- the generated install page; `public/index.html` redirects `/` to it
+Reload a running tmux server with:
 
-### Input modes
-
-**Direct mode (default):** Hidden `type="password"` input suppresses IME autocorrect/swipe at the OS level. Every keypress forwarded immediately. Best for TUI navigation, vim, tmux, agent control sequences.
-
-**Compose mode:** Hidden `<textarea>` captures swipe-typed words and voice dictation. Composition preview shows the word being formed. Full string sent on commit. Best for writing prompts, commit messages, long-form text to coding agents.
-
-## Setup
-
-### Docker (recommended)
-
-```bash
-git clone https://github.com/flavordrake/mobissh.git
-cd mobissh
-
-export TS_AUTHKEY="tskey-auth-..."
-export TS_HOSTNAME="mobissh"
-
-docker compose -f docker-compose.prod.yml up -d
+```
+tmux source-file ~/.tmux.conf
 ```
 
-The container joins your Tailscale network, serves HTTPS via `tailscale serve`, and restarts automatically. Access at `https://<TS_HOSTNAME>.<tailnet>/ssh/`.
+What each line does:
 
-Rebuild after changes:
-```bash
-docker compose -f docker-compose.prod.yml build && docker compose -f docker-compose.prod.yml up -d
-```
+- `mouse on` makes tmux accept the mouse reports the app sends (SGR 1006 encoding). A vertical swipe becomes a wheel event, so tmux enters copy mode and scrolls its history; a horizontal swipe on the status line switches windows. Without it, a swipe inside tmux sends arrow keys instead of scrolling, and long-press menus on detected links are not available (the gutter chips still work).
+- `history-limit` sets how far back you can scroll in tmux.
+- `window-size latest` sizes the session to the most recently active client. Without it, a laptop or a stale client attached to the same session can shrink the phone's view, and the status-line swipe can land in the pane instead.
 
-### Local (development / testing)
+Without tmux, everything except window swiping works: a vertical swipe scrolls the app's own scrollback, and detection, the gutter, the keybar, the compose bar and the file browser behave the same.
 
-```bash
-cd server && npm install && npm start
-# Listening on http://0.0.0.0:8081
-```
+If a program exits and leaves mouse reporting on, taps print codes like `0;19;13M` at your prompt. Tap the Reset key on the keybar to clear it; it resets the app's input modes locally and sends nothing to the server.
 
-### Other options
+## Usage
 
-**Tailscale Serve (no Docker):** `cd server && npm start` then `tailscale serve https / http://localhost:8081`
+1. Tap **New connection** on the home screen, fill in the host and user, and choose a password or a key (or paste an ssh_config block on the SSH config tab).
+2. Tap the profile to connect, and trust the host key on first contact.
+3. Type directly into the terminal, or tap the compose button to write with swipe or voice and send.
+4. Open the session menu from the session bar for files, port forwards, link-highlight options, theme and font size, and the other open sessions.
+5. Use the Files icon in the session menu, or tap a detected path, to browse, view and edit files.
 
-**nginx subpath:** `BASE_PATH=/ssh PORT=8081 node server/index.js` with `nginx-ssh-location.conf`. See `scripts/setup-nginx.sh`.
+## Security and privacy
 
-**Stale PWA on a device:** `/clear` survives the retirement precisely for this — visit it to unregister the old service worker and wipe its storage.
+Credentials are stored with the platform's secure storage (Android Keystore, Apple Keychain, libsecret on Linux), never in plaintext. Sessions go straight from the device to your server. See [SECURITY.md](SECURITY.md) and [docs/PRIVACY.md](docs/PRIVACY.md).
 
 ## Development
 
-### Build
-
-The app is built with `scripts/ship-native.sh` (never a bare `flutter` call). There is
-no web build step — `public/` ships verbatim.
-
-### Testing
-
-| Layer | What it covers | Command |
-|---|---|---|
-| Fast gate | Rule tests, infra tests, `flutter analyze`, Flutter unit suite | `scripts/native-fast-gate.sh` |
-| Infra | Feedback guard, manifest, notify + TRACE scripts | `scripts/test-infra.sh` |
-| On-emulator | Connect/auth, reconnect, SFTP, IPC, lifecycle | `scripts/with-fleet-emulator.sh -- scripts/native-integration-suite.sh` |
-| Manual device | Gestures, keyboard, biometric, lifecycle | On-device |
-
-### Bot delegation
-
-Issues labeled `bot` are worked by local develop agents. `/delegate` classifies and assigns; `/integrate` gates and merges. Process details in `.claude/process.md`.
+Building, testing, the companion server, diagnostics and the features that are not part of a release build are in [developer.md](developer.md).
 
 ## License
 

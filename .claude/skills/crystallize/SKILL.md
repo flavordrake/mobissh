@@ -227,12 +227,12 @@ is 3 or more, do not re-delegate — file a comment on the issue
 explaining the pattern of failures instead.
 ```
 
-**After:**
+**After** (`<count-attempts-script>` stands for whatever script the crystallization creates):
 ```markdown
 ### Step 3: Count failed attempts
 
 ```
-scripts/count-bot-attempts.sh <issue-number>
+scripts/<count-attempts-script> <issue-number>
 ```
 
 Output: `<count>` (integer). If >= 3, do not re-delegate — file a

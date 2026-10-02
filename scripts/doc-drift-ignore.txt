@@ -1,0 +1,14 @@
+# scripts/doc-drift-ignore.txt: globs scripts/doc-drift.sh skips. Each entry says why.
+
+# Placeholder names in examples (.claude/rules/testing.md header grammar, docs/agents.md).
+scripts/x.sh
+scripts/y.sh
+scripts/z.sh
+scripts/foo.sh
+
+# Retired PWA test runners named by history-bannered research docs
+# (docs/research-ios-simulator.md, docs/emulator-test-overhaul.md); removed in #1205.
+scripts/start-appium.sh
+scripts/run-appium-tests.sh
+scripts/run-ios-tests.sh
+scripts/test-headless.sh

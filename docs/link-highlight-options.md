@@ -2,7 +2,7 @@ Tracking: #1153 (slices #1154, #1155)
 
 # Link highlight options (native)
 
-Status: SPEC v1 (2026-09-16). Owner directive: replace the one-tap detection toggle with an options menu — intensity (low / medium / high: saturation + visual noise of the overlay), gutter side, and gutter mode (overlay the last column vs a dedicated column). Plan, spec, red→green tests on UI and impl.
+Status: shipped (slice 1 #1154, slice 2 #1155 in +186). D1 (Settings-panel mirror) deferred. Owner directive: replace the one-tap detection toggle with an options menu — intensity (low / medium / high: saturation + visual noise of the overlay), gutter side, and gutter mode (overlay the last column vs a dedicated column). Plan, spec, red→green tests on UI and impl.
 
 ## 1. Purpose
 

@@ -13,13 +13,11 @@
 #
 # Environment:
 #   PORT          — server port (default: 8081)
-#   BASE_PATH     — URL base path (default: none)
 #   HEALTH_TIMEOUT — seconds to wait for health (default: 10)
 
 set -euo pipefail
 
 PORT="${PORT:-8081}"
-BASE_PATH="${BASE_PATH:-}"
 HEALTH_TIMEOUT="${HEALTH_TIMEOUT:-10}"
 SERVER_CMD="node server/index.js"
 MOBISSH_TMPDIR="${MOBISSH_TMPDIR:-/tmp/mobissh}"
@@ -128,7 +126,6 @@ cmd_start() {
 
   log "Starting server on port ${PORT}..."
   local env_args="PORT=${PORT}"
-  [[ -n "$BASE_PATH" ]] && env_args="${env_args} BASE_PATH=${BASE_PATH}"
   # #1205: the WS_ORIGIN_ALLOWLIST / WS_SKIP_TOKEN_AUTH relaxations went with the
   # WebSocket SSH bridge they guarded.
 

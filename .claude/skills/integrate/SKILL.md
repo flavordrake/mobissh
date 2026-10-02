@@ -8,8 +8,8 @@ description: Use when the user says "integrate", "review bot PRs", "merge bot fi
 > **Process reference:** `.claude/process.md` defines the label taxonomy, workflow states,
 > and conventions that this skill must follow.
 
-Review, validate, and merge PRs created by the Claude bot from `@claude` issue tasks.
-Bot PRs follow the branch pattern `claude/issue-{N}-{DATE}-{TIME}` or `bot/issue-{N}` (local develop agents).
+Review, validate, and merge PRs created by local develop agents (`/develop`).
+Bot PRs follow the branch pattern `bot/issue-{N}`.
 
 ## North Star
 
@@ -77,7 +77,7 @@ Options:
 - `--issue N` -- clean up a specific issue's branches
 - `--all` -- delete all bot branches (nuclear option)
 
-## Step 3: Gate (5 tiers)
+## Step 3: Gate (3 tiers)
 
 For each candidate branch (in risk order: low first, then medium, then high):
 
@@ -85,23 +85,21 @@ For each candidate branch (in risk order: low first, then medium, then high):
 scripts/integrate-gate.sh <branch-name>
 ```
 
-The gate runs 5 tiers:
-1. **tsc** — TypeScript typecheck
-2. **eslint** — static analysis
-3. **coverage check** — source changes must come with test changes
-4. **coverage** — verifies source changes include test changes (rejects PRs with
-   0 test files changed when source files changed)
-5. **headless** — Playwright browser tests (auto-runs when PR touches UI files:
-   `ui.ts`, `index.html`, `app.css`). Skipped for non-UI PRs.
+The gate runs 3 tiers:
+1. **native** — `scripts/native-fast-gate.sh` (rule tests, infra tests, analyze, flutter unit)
+2. **eslint** — over the remaining JS (`server/`, `server-feedback/`, `public/`, `test/`)
+3. **coverage** — rejects a branch that changes source (`native/lib`, server JS) with
+   0 test files changed
 
 The script:
-1. Stashes any local uncommitted changes
+1. Stashes any local uncommitted changes (skipped inside a worktree)
 2. Fetches and checks out the branch (detached HEAD)
-3. Calls `scripts/native-fast-gate.sh` and eslint
-4. Reports pass/fail per gate
+3. Runs the three tiers
+4. Prints `+ GATE PASSED: <branch>` or `! GATE FAILED: <branch>` plus a
+   `native: X | eslint: X | coverage: X` line
 5. Restores the original branch and pops stash
 
-Note: fast gate does NOT run browser tests. Headless Playwright is Step 4.
+Note: the gate does NOT run the on-emulator tier. That is Step 7.
 
 Exit code 0 = all gates passed, 1 = gate failed, 2 = setup error.
 
@@ -119,7 +117,7 @@ not pure CPU.
 
 Example agent invocation:
 ```
-Agent(subagent_type="general-purpose", isolation="worktree", model="sonnet", prompt="<integrate-gater prompt>", description="...")
+Agent(subagent_type="general-purpose", isolation="worktree", prompt="<integrate-gater prompt>", description="...")
 ```
 
 Always use `general-purpose` — custom subagent_types are broken in file-based
@@ -152,21 +150,31 @@ If the container is stale, the user sees old behavior and files false bugs.
 ## Step 5: Merge or reject
 
 ### Merge criteria (ALL must be true)
-- Fast gate passes (typecheck + lint + unit tests)
-- Acceptance gate passes (emulator or headless, depending on availability)
+- `integrate-gate.sh` passes (native gate + eslint + coverage)
+- On-emulator suite passes for integration-sensitive PRs (see below)
 - No test regressions vs main
 - **Test coverage**: PR includes new or updated tests. Check PR body for "Tests added"
   and "fail→pass" entries. A PR with zero test changes for a feature/bugfix is incomplete —
   reject with comment requesting test coverage.
-- Diff review: no plaintext secret storage, no `force: true` Playwright hacks, no inline
-  styles (prefer CSS), no `--no-verify` bypasses
+- Diff review: no plaintext secret storage, no fixed-delay/extended-timeout test hacks,
+  no inline styles in `public/` HTML, no `--no-verify` bypasses
 
 ```bash
 scripts/gh-ops.sh integrate <PR-N> <issue-N>
 ```
 
-This single command: merges the PR, closes the issue, removes the `bot` label,
-pulls main, and prunes stale refs. Worktree cleanup is deferred to release.
+This single command: merges the PR (merge commit by default; `--squash`/`--rebase`
+override), closes the issue, removes the `bot` label, pulls main, and prunes stale refs.
+Worktree cleanup is deferred to release.
+
+**Integration-sensitive PRs are refused.** If the PR touches session state machine,
+connect/auth, reconnect, SFTP or IPC code (`scripts/integration-required.sh` decides),
+`integrate` exits with BLOCKED. Run the on-emulator suite, then re-run with the flag:
+```bash
+scripts/with-fleet-emulator.sh -- scripts/native-integration-suite.sh
+scripts/gh-ops.sh integrate <PR-N> <issue-N> --integration-verified
+```
+Pass `--integration-verified` only after the suite actually ran green against the baseline.
 
 For orphaned branches (no PR), create a PR first, then integrate:
 ```bash
@@ -177,15 +185,15 @@ scripts/gh-ops.sh integrate <PR-N> <issue-N>
 ### Approve-with-test-fixup (UX approved, tests outdated)
 
 When a bot PR:
-- Passes fast gate (tsc + lint + unit)
+- Passes `integrate-gate.sh`
 - UX/approach is approved by human review
-- But headless tests fail because the UX intentionally changed (outdated assertions, not bugs)
+- But tests fail because the UX intentionally changed (outdated assertions, not bugs)
 
 This is NOT a rejection. The feature is correct; the test harness is outdated. Action:
 
 1. Merge the feature PR to main (or have the bot merge from main in a test-fixup pass)
-2. Use `/delegate` to post a **test-fixup** `@claude` comment on the same issue
-   (see the test-fixup template in the delegate skill)
+2. Spawn a **test-fixup** develop agent on the same issue (`/develop N` with the
+   test-fixup template from the delegate skill)
 3. Keep `bot` label -- do NOT swap to `divergence`
 4. The test-fixup pass verifies with the full gate including the on-emulator tier
 
@@ -229,17 +237,11 @@ scripts/container-ctl.sh restart
 
 This is a regression gate between merges. The full acceptance run is Step 7.
 
-## Step 7: Final acceptance -- Appium emulator run with recording
+## Step 7: Final acceptance -- on-emulator integration suite
 
-After ALL merges are complete, run the full Appium test suite on the emulator.
-This produces a screen recording for human review of new features.
+After ALL merges are complete, run the native integration suite on a leased emulator:
 
 ```bash
-if [[ ! -e /dev/kvm ]]; then
-  echo "KVM not available -- emulator cannot run on this machine"
-  EMULATOR=false
-elif ! command -v emulator &>/dev/null && ! command -v adb &>/dev/null; then
-  echo "Android SDK not installed -- running setup..."
 scripts/with-fleet-emulator.sh -- scripts/native-integration-suite.sh
 ```
 
@@ -308,14 +310,14 @@ These rules come from real project history. They are not suggestions.
   Always restart the server and verify the version hash after merging. A stale server
   means the user sees old behavior and files false bugs.
 
-- **No force hacks**: if a Playwright test needs `force: true` or `timeout: 30000` to pass,
+- **No timing hacks**: if a test needs a fixed sleep or an extended timeout to pass,
   the fix is wrong -- the underlying layout or timing issue needs to be addressed.
 
 - **Selection overlay precedent**: PR went through 6 commits, never worked on real Android,
   got feature-flagged off. Bot fixes that keep failing acceptance tests should be branched
   off rather than iterated on main.
 
-- **No inline styles**: prefer CSS classes. This is a project rule (CLAUDE.md).
+- **No inline styles** in `public/` HTML: prefer CSS classes (`.claude/rules/code-style.md`).
 
 - **Outdated != flaky**: When a UX change causes test failures, those tests need
   their assertions updated -- they aren't broken or intermittent. Use the test-fixup pass
@@ -329,7 +331,7 @@ These rules come from real project history. They are not suggestions.
 ## Edge Cases
 
 - No bot branches at all -- report "No bot PRs to integrate"
-- Bot PR conflicts with main -- close with comment, the bot will need to rebase
+- Bot PR conflicts with main -- close with comment; a re-run develop agent merges from main
 - User has uncommitted local changes -- `integrate-gate.sh` auto-stashes and restores
 - Emulator unavailable -- the lease in `scripts/with-fleet-emulator.sh` fails LOUD, never silently
 - SSH key not loaded for git fetch -- scripts use `gh api` which authenticates via `gh` token

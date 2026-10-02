@@ -1,6 +1,6 @@
 # MobiSSH -- Claude Code Context
 
-> **Active TRACE**: `.traces/trace-link-browser-routing-1195-175316/` — per-profile browser for extracted links #1195 (spec `docs/link-browser-routing.md`; slice 1 #1196 platform seam IN PROGRESS, device; slice 2 #1197 routing+settings waits on it). Prior arcs: `.traces/trace-jump-host-1182-183208/` (#1182 COMPLETE, shipped +188 — device validation owed), `.traces/trace-link-highlight-options-222819/` — link highlight options #1153 (spec `docs/link-highlight-options.md`; slice 1 #1154 intensity+sheet MERGED 2026-09-16; slice 2 #1155 gutter side + column mode IN PROGRESS, device). Side arcs: coverage tooling #1152 merged (Phase 2 assessment → backfill issues pending); deep-link emulator gap #1151 merged. Prior arcs: `.traces/trace-deep-link-intents-1117-200922/` (#1117, shipped +184; owner device validation owed; claude verb R24 deferred), `.traces/trace-fleet-emulator-gate-restore-003808/`. Durable learnings in memory.
+> **Active TRACE**: `.traces/trace-docs-two-way-sync-123001/` — two-way doc/code sync and release prep #1240 (fleet doc-drift standard, `scripts/doc-drift.sh`; README/developer.md split). Prior arcs: `.traces/trace-link-browser-routing-1195-175316/` (#1195 shipped +189 — device validation owed), `.traces/trace-jump-host-1182-183208/` (#1182 COMPLETE, shipped +188 — device validation owed), `.traces/trace-link-highlight-options-222819/` (#1153 shipped +186). Side arcs: coverage tooling #1152 merged (Phase 2 assessment → backfill issues pending); deep-link emulator gap #1151 merged. Prior arcs: `.traces/trace-deep-link-intents-1117-200922/` (#1117, shipped +184; owner device validation owed; claude verb R24 deferred), `.traces/trace-fleet-emulator-gate-restore-003808/`. Durable learnings in memory.
 
 ## Command Hygiene (read this first)
 - **One script per Bash call.** No `&&` chains, no `;` sequences, no compound commands.
@@ -20,6 +20,8 @@ spec the native app duplicates — read `src/`-era references in docs as history
 in git for the code.
 
 Graduated from `poc/android-ssh` in `flavordrake/threadeval` @ tag `android-ssh-v0.1`.
+
+User-facing features: `README.md`. Build, test, server, diagnostics and what is (not) in a release build: `developer.md`. Docs and code are kept in sync by `scripts/doc-drift.sh` (warns in the fast gate, blocks a ship).
 
 ## Architecture
 - **`native/`** -- the Flutter app: the product. `native/third_party/flterm` is the
@@ -74,16 +76,16 @@ Containers reach each other via Docker DNS names, NOT `localhost` port mapping.
 ### Native app builds
 - **Versioning**: `x.y.z[-STAGE]+B` per `docs/VERSIONING.md` — B is a global never-resetting build ordinal (== Android versionCode); stages flow `-dev` → `-rc.N` → final.
 - **Android APK**: `scripts/ship-native.sh` (build + publish to `native.html`), local on fd-dev.
-- **macOS app**: built on matts-macbook-air (only Xcode host), published to `native.html` from fd-dev. Kick off with `scripts/dispatch-mac-build.sh`; full pipeline in `native/MAC-BUILD.md`. iOS device builds are out of scope (signing-gated).
+- **macOS app**: built on matts-macbook-air (only Xcode host), published to `native.html` from fd-dev. Kick off with `scripts/mac-build-via-hub.sh` (or the older `scripts/dispatch-mac-build.sh`); full pipeline in `native/MAC-BUILD.md`. iOS device builds are out of scope (signing-gated).
 
 ## Backlog -- GitHub Issues
-All backlog items are filed as issues in this repo. Use `gh issue list` for current state.
+All backlog items are filed as issues in this repo. Use `scripts/gh-ops.sh search` / `fetch-issues` for current state.
 Use `/delegate` to scan, classify, and dispatch bot-ready issues.
 Use `/integrate` to review, gate, and merge bot PRs.
 
 ## Rules
 Detailed rules live in `.claude/rules/` (modular, some path-scoped):
-- `security.md` -- credential vault, no plaintext, no secrets
+- `security.md` -- secure storage for secrets, no plaintext, no secrets in code
 - `testing.md` -- test gates, the integration baseline contract, emulator rules
 - `scripts.md` -- script conventions, timestamps (scoped to `scripts/`)
 - `code-style.md` -- CSS over inline, no separators, build policy

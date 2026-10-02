@@ -55,7 +55,8 @@ filesystem — that is the filename sanitization.
 - bug-report frames: max 120 (`MAX_FRAMES`).
 - byte/scroll/sent-SGR traces: last 8192 events each (server-side backstop; the
   client bounds the rings).
-- Other routes: no request cap (unchanged from pre-extraction behavior).
+- Every feedback route: 16MB request cap and a decoded-image cap
+  (`server/feedback-guard.js`, `server/feedback-store.js`).
 
 Secret scrubbing is CLIENT-side (`feedback_bundle.dart scrubSecrets`); the
 service stores what it receives. Nothing new is logged beyond the
@@ -112,16 +113,18 @@ mobissh-prod server/index.js
   accepted (duplicate > lost).
 - Security: nothing is exposed beyond the tailnet. The service listens only on
   the internal `mobissh` bridge network; the app still talks to the single
-  Tailscale endpoint. No new auth surface; no secrets in code or logs.
+  Tailscale endpoint. Every upload must carry the shared `X-MobiSSH-Key`
+  header and is rate limited per IP (`server/feedback-guard.js`, #1115). Only
+  the in-app feedback overlay sends the key today; the crash reporter, the
+  install-page form and the termux uploader do not, so they are rejected (#1243).
 
 ### Tests
 
-- `server-feedback/test.js` (`npm test` in `server-feedback/`) — round-trip of
-  all four routes against a temp dir, exact filename contract, 1MB crash cap,
-  raw-crash preservation, retention sweep, healthz.
-HISTORICAL (#1205 deleted it) — `server/test.js` covered proxy pass-through (stub service
-  receives the raw body, response relayed verbatim), fail-open fallback
-  (unreachable service → local file written), pre-cutover local default.
+- `server-feedback/test.js`, run by `scripts/test-infra.sh` in fast gate 0:
+  round-trip of all four routes against a temp dir with the key set, exact
+  filename contract, 1MB crash cap, raw-crash preservation, retention sweep,
+  healthz. The proxy pass-through and fail-open fallback in `server/index.js`
+  have no test since #1205.
 
 ## 3. Cutover (explicit, owner-run; nothing flips silently)
 
