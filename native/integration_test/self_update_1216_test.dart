@@ -231,8 +231,10 @@ void main() {
           // pump once the installer has the foreground — a paused engine
           // produces no frame for pump() to await.
           await Future<void>.delayed(const Duration(milliseconds: 200));
-          if (WidgetsBinding.instance.lifecycleState ==
-              AppLifecycleState.resumed) {
+          // null = not reported yet: the test binding resets the lifecycle
+          // between tests, and this test is no longer the first in the file.
+          final state = WidgetsBinding.instance.lifecycleState;
+          if (state == null || state == AppLifecycleState.resumed) {
             await tester.pump();
           }
         }
