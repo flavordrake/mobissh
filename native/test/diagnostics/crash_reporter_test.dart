@@ -136,6 +136,98 @@ void main() {
           reason: 'failed upload should retain file for next attempt');
     });
 
+    // #1243: the feedback guard rejects any upload without X-MobiSSH-Key, so
+    // crash uploads never arrived and were retried on every launch + connect.
+    test('attaches X-MobiSSH-Key when a feedback key is configured', () async {
+      final headers = <Map<String, String>>[];
+      CrashReporter.configure(
+        env: env,
+        httpClient: MockClient((req) async {
+          headers.add(req.headers);
+          return http.Response('{"ok":true}', 200);
+        }),
+        endpoint: 'http://fake/endpoint',
+        feedbackKey: 'k-1243',
+      );
+
+      await CrashReporter.recordError(error: 'keyed');
+      await CrashReporter.uploadPending();
+
+      expect(headers, hasLength(1));
+      expect(headers.single['X-MobiSSH-Key'], 'k-1243');
+    });
+
+    test('omits X-MobiSSH-Key when no feedback key is baked', () async {
+      final headers = <Map<String, String>>[];
+      CrashReporter.configure(
+        env: env,
+        httpClient: MockClient((req) async {
+          headers.add(req.headers);
+          return http.Response('{"ok":true}', 200);
+        }),
+        endpoint: 'http://fake/endpoint',
+        feedbackKey: '',
+      );
+
+      await CrashReporter.recordError(error: 'unkeyed');
+      await CrashReporter.uploadPending();
+
+      expect(headers.single.containsKey('X-MobiSSH-Key'), isFalse);
+    });
+
+    test('default endpoint is the feedback origin + /api/native-crash', () {
+      expect(
+        CrashReporter.defaultEndpoint,
+        'https://mobissh.tailbe5094.ts.net/api/native-crash',
+      );
+    });
+
+    for (final status in [401, 403]) {
+      test('$status is permanent: the crash is never retried', () async {
+        var posts = 0;
+        CrashReporter.configure(
+          env: env,
+          httpClient: MockClient((req) async {
+            posts++;
+            return http.Response('{"error":"unauthorized"}', status);
+          }),
+          endpoint: 'http://fake/endpoint',
+          feedbackKey: 'wrong',
+        );
+
+        await CrashReporter.recordError(error: 'rejected');
+        final first = await CrashReporter.uploadPending();
+        final second = await CrashReporter.uploadPending();
+
+        expect(first.failed, 1);
+        expect(posts, 1, reason: 'a rejected crash must not be re-posted');
+        expect(second.scanned, 0);
+        expect(await CrashReporter.pendingCrashCount(), 0);
+        final kept = await env.dir.list().toList();
+        expect(kept, hasLength(1),
+            reason: 'the rejected report stays on disk for manual recovery');
+      });
+    }
+
+    test('5xx keeps the crash pending for the next attempt', () async {
+      var posts = 0;
+      CrashReporter.configure(
+        env: env,
+        httpClient: MockClient((req) async {
+          posts++;
+          return http.Response('busy', 503);
+        }),
+        endpoint: 'http://fake/endpoint',
+      );
+
+      await CrashReporter.recordError(error: 'retry-me');
+      await CrashReporter.uploadPending();
+      await CrashReporter.uploadPending();
+
+      expect(posts, 2);
+      expect(await CrashReporter.pendingCrashCount(), 1);
+    });
+
     test('exception from the HTTP client leaves the file in place',
         () async {
       CrashReporter.configure(

@@ -31,7 +31,7 @@ import 'package:mobissh/diagnostics/connect_trace.dart';
 import 'package:mobissh/diagnostics/detection_geom.dart'
     show activeDetectionGeomSnapshot;
 import 'package:mobissh/diagnostics/diagnostics_config.dart'
-    show kRawContentDiagnosticsEnabled;
+    show feedbackEndpoint, feedbackKey, kRawContentDiagnosticsEnabled;
 import 'package:mobissh/diagnostics/feedback_bundle.dart' show scrubSecrets;
 import 'package:mobissh/diagnostics/frame_stats.dart'
     show frameStatsLine, frameStatsSnapshot;
@@ -40,22 +40,6 @@ import 'package:mobissh/diagnostics/paint_stats.dart'
 import 'package:mobissh/diagnostics/gesture_trace.dart';
 import 'package:mobissh/diagnostics/session_byte_recorder.dart';
 import 'package:mobissh/ui/top_toast.dart';
-
-/// Endpoint that ingests bug reports. Compile-time overridable (#966): the
-/// personal build keeps the tailnet default; the PUBLIC Play build points at the
-/// Cloudflare Worker via `--dart-define=MOBISSH_FEEDBACK_ENDPOINT=…`
-/// (see infra/bug-report-worker/). The orchestrator's watcher polls the files
-/// the tailnet endpoint writes.
-const String feedbackEndpoint = String.fromEnvironment(
-  'MOBISSH_FEEDBACK_ENDPOINT',
-  defaultValue: 'https://mobissh.tailbe5094.ts.net/api/bug-report',
-);
-
-/// Optional shared key sent as `X-MobiSSH-Key` so the public Worker endpoint is
-/// not a fully-open drop box. Empty (default) → no header (the tailnet endpoint
-/// needs none). Set for the public build via
-/// `--dart-define=MOBISSH_FEEDBACK_KEY=…`.
-const String feedbackKey = String.fromEnvironment('MOBISSH_FEEDBACK_KEY');
 
 /// Formats the baked build identifiers into the `[<build> <hash>]` shape the
 /// existing reports use (see public/native-feedback.js `data-version`). The

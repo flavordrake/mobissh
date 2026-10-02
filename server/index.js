@@ -161,8 +161,7 @@ function proxyFeedbackBody(serviceUrl, route, body, contentType, authKey) {
   });
 }
 
-async function handleFeedbackUpload(req, res) {
-  const route = req.url;
+async function handleFeedbackUpload(req, res, route = req.url) {
   // #484: auth + per-IP rate limit BEFORE buffering, so an unauthenticated or
   // over-quota caller can never buffer/decode an attacker-sized body.
   const rej = feedbackGuard.preflight(req);
@@ -460,6 +459,18 @@ const server = http.createServer((req, res) => {
   // Persistence semantics live in server/feedback-store.js.
   if (req.method === 'POST' && feedbackStore.FEEDBACK_ROUTES.includes(req.url)) {
     handleFeedbackUpload(req, res);
+    return;
+  }
+
+  // POST /api/install-feedback — the install page's feedback form (#609/#1243).
+  // A browser page cannot hold the feedback key (anything served to it is not a
+  // secret), so this same-origin route adds the SERVER's key and runs the normal
+  // /api/bug-report pipeline: rate limit + byte cap still apply, and an unset key
+  // still blocks with 503. Rejected: injecting the key into native.html. The
+  // route is exactly as reachable as the install page itself (tailnet only).
+  if (req.method === 'POST' && req.url === '/api/install-feedback') {
+    req.headers['x-mobissh-key'] = process.env.MOBISSH_FEEDBACK_KEY || '';
+    handleFeedbackUpload(req, res, '/api/bug-report');
     return;
   }
 
