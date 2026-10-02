@@ -74,12 +74,18 @@ class PendingHostKey {
   /// exhaustive state switch keeps treating it as the human-paced prompt.
   final bool formatChanged;
 
+  /// The saved fingerprint the re-confirm replaces (the legacy MD5 hex), so
+  /// the user has the OLD key to match on the server (#1249). Null on a
+  /// first-contact prompt.
+  final String? storedFingerprint;
+
   const PendingHostKey({
     required this.host,
     required this.port,
     required this.keyType,
     required this.fingerprint,
     this.formatChanged = false,
+    this.storedFingerprint,
   });
 }
 
@@ -1005,12 +1011,32 @@ class SshSessionController {
     // Compare-and-set: the accept path can only trust an UNKNOWN host (#1108)
     // or replace a legacy-format entry being re-confirmed (#1226). A changed
     // key never reaches a pending prompt (the verify path fails it closed), so
-    // this is the belt-and-suspenders second layer.
-    _hostKeyStore.trustIfPromptable(
-      pending.host,
-      pending.port,
-      pending.fingerprint,
-    );
+    // this is the belt-and-suspenders second layer — and with one store shared
+    // by every session (#1249) another session can pin this host while the
+    // prompt is open, so the result is honoured. The SAME key pinned meanwhile
+    // (status match) is fine; anything else refuses the connect.
+    final trusted =
+        _hostKeyStore.trustIfPromptable(
+          pending.host,
+          pending.port,
+          pending.fingerprint,
+        ) ||
+        _hostKeyStore.status(pending.host, pending.port, pending.fingerprint) ==
+            HostKeyStatus.match;
+    if (!trusted) {
+      _emit(
+        _data.copyWith(
+          state: SshSessionState.failed,
+          error:
+              'Host key not trusted for ${pending.host}:${pending.port} — the '
+              'saved key changed while the prompt was open. Connection '
+              'refused.',
+          clearPendingHostKey: true,
+        ),
+      );
+      completer.complete(false);
+      return;
+    }
     _emit(
       _data.copyWith(
         state: SshSessionState.authenticating,
@@ -1360,6 +1386,9 @@ class SshSessionController {
           keyType: type,
           fingerprint: fp,
           formatChanged: status == HostKeyStatus.formatChanged,
+          storedFingerprint: status == HostKeyStatus.formatChanged
+              ? _hostKeyStore.trustedFingerprint(params.host, params.port)
+              : null,
         ),
       ),
     );

@@ -29,6 +29,7 @@ import '../diagnostics/diagnostics_config.dart'
 import '../terminal/tmux_control_channel.dart';
 import '../terminal/tmux_control_mode_flag.dart';
 import '../ssh/da2_responder.dart';
+import '../ssh/host_key_store.dart';
 import '../ssh/jump_host.dart';
 import '../ssh/ssh_connect_params.dart';
 import '../ssh/ssh_session.dart';
@@ -83,7 +84,19 @@ typedef HostExecRunner = Future<int?> Function(SSHClient client, String line);
 Future<int?> _defaultExecRunner(SSHClient client, String line) async =>
     (await client.runWithResult(line)).exitCode;
 
-SshSessionController _defaultControllerFactory() => SshSessionController();
+/// A factory whose controllers all share ONE [HostKeyStore] (#1249), built
+/// lazily on the first connect. Per-controller stores each held a private copy
+/// of the trust map, so one session could erase another's pin or bring back a
+/// key it forgot. Jump hops verify through their controller's store, so they
+/// share it too. [makeStore] is a test seam.
+SshControllerFactory sharedStoreControllerFactory([
+  HostKeyStore Function()? makeStore,
+]) {
+  HostKeyStore? store;
+  return () => SshSessionController(
+    hostKeyStore: store ??= (makeStore ?? HostKeyStore.new)(),
+  );
+}
 
 /// Builds the per-session direct-tcpip tunnel opener for the ssh -L engine
 /// (#1047). Production resolves the session's live `SSHClient` at ACCEPT time
@@ -121,7 +134,7 @@ class SessionHost {
     this.replayWindow = kAttentionReplayWindow,
     this.switchGraceWindow = kAttentionSwitchGraceWindow,
   }) : _gateway = gateway,
-       _factory = controllerFactory ?? _defaultControllerFactory,
+       _factory = controllerFactory ?? sharedStoreControllerFactory(),
        _sftpOpener = sftpOpener,
        _shellOpener = shellOpener ?? _defaultShellOpener,
        _execOpener = execOpener ?? _defaultExecOpener,
@@ -1011,7 +1024,8 @@ class SessionHost {
   ///
   /// Each hop authenticates with the credentials the UI resolved for THAT hop
   /// (R8 — the task isolate has no vault), and its host key runs through the
-  /// session's OWN [HostKeyStore] and prompt via `verifyHopHostKey` (R9/R10),
+  /// session's [HostKeyStore] (shared by every session, #1249) and prompt via
+  /// `verifyHopHostKey` (R9/R10),
   /// so a bastion gets exactly the target's fail-closed treatment.
   void _installJumpChain(SshConnectCommand cmd, SshSessionController controller) {
     if (cmd.jumpHops.isEmpty) return;
@@ -2169,6 +2183,7 @@ class SessionHost {
         keyType: pending.keyType,
         fingerprint: pending.fingerprint,
         formatChanged: pending.formatChanged,
+        storedFingerprint: pending.storedFingerprint,
       ).toJson(),
     );
   }

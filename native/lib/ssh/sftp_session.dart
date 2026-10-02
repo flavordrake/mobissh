@@ -161,6 +161,21 @@ class UploadPublishException implements Exception {
       'content is at $partPath and the original is untouched';
 }
 
+/// #1248: a fresh `.part` could not be created EXCLUSIVELY — something (e.g. a
+/// symlink) appeared at its name after it was cleared. Nothing was written and
+/// the destination is untouched; the upload refuses rather than follow it.
+class UploadStagingException implements Exception {
+  const UploadStagingException(this.partPath, this.cause);
+
+  final String partPath;
+  final Object cause;
+
+  @override
+  String toString() =>
+      'Upload refused: could not create a fresh $partPath ($cause); something '
+      'reappeared at that name. Nothing was written; the original is untouched';
+}
+
 /// The size to verify a download of [file] against: its FSTAT size, taken on
 /// the open handle so it is the same snapshot the read uses. Null when the
 /// server omits it or reports 0 — virtual files (`/proc`) report 0 yet have
@@ -337,8 +352,10 @@ class DartSshSftpSession implements SftpSession {
     // on the RESOLVED path so `~/…` lands right (#867), then verify + rename.
     final resolved = await _resolve(path);
     final partPath = '$resolved.part';
-    final file = await _client.open(partPath, mode: _truncateMode);
+    final keep = await _destinationAttrs(resolved);
+    final file = await _openFreshPart(partPath);
     try {
+      await _applyAttrs(file, keep);
       await file.writeBytes(bytes);
     } finally {
       await file.close();
@@ -358,15 +375,21 @@ class DartSshSftpSession implements SftpSession {
     final local = File(localPath);
     final total = await local.length();
 
+    final keep = await _destinationAttrs(resolved);
     final resumeAt = await _verifiedPartLength(partPath, local, total);
     onProgress(resumeAt, total);
-    if (resumeAt < total) {
-      // A restart truncates; a verified resume writes in place from its end.
-      final mode = resumeAt == 0
-          ? _truncateMode
-          : (SftpFileOpenMode.write | SftpFileOpenMode.create);
-      final file = await _client.open(partPath, mode: mode);
-      try {
+    // A restart re-creates the `.part` exclusively (#1248); a verified resume
+    // reopens the regular file `_verifiedPartLength` just lstat'd, without
+    // create, and writes in place from its end. Residual: SFTP v3 has no
+    // O_NOFOLLOW, so a link swapped in between that lstat and this open would
+    // be followed — the one window the protocol cannot close.
+    final file = resumeAt == 0
+        ? await _openFreshPart(partPath)
+        : await _client.open(partPath, mode: SftpFileOpenMode.write);
+    try {
+      // Even a no-write publish (resumeAt == total) gets the mode set here.
+      await _applyAttrs(file, keep);
+      if (resumeAt < total) {
         // The library's pipelined writer (16 KiB packets, 64 in flight, #1225
         // lesson: library sizes, not ours). `done` completes only once every
         // write is ACKED, so nothing is left in flight at close.
@@ -375,17 +398,73 @@ class DartSshSftpSession implements SftpSession {
           offset: resumeAt,
           onProgress: (acked) => onProgress(resumeAt + acked, total),
         ).done;
-      } finally {
-        await file.close();
       }
+    } finally {
+      await file.close();
     }
     await _publishPart(partPath, resolved, total);
     return total;
   }
 
-  static final _truncateMode = SftpFileOpenMode.write |
-      SftpFileOpenMode.create |
-      SftpFileOpenMode.truncate;
+  /// #1248: the existing destination's attributes (following a link, as the
+  /// editor reads it), or null for a new file — which keeps the server default.
+  Future<SftpFileAttrs?> _destinationAttrs(String resolved) async {
+    try {
+      return await _client.stat(resolved);
+    } on SftpStatusError {
+      return null;
+    }
+  }
+
+  /// #1248: a FRESH `.part` that is never a symlink. Whatever is at the name
+  /// (a stale `.part` or a planted link) is removed — `remove` unlinks a link
+  /// itself, never its target — then the open is write|create|EXCLUSIVE, so
+  /// anything that reappears in between (O_EXCL refuses even a dangling link)
+  /// fails the upload loudly instead of being written through.
+  Future<SftpFile> _openFreshPart(String partPath) async {
+    var exists = true;
+    try {
+      await _client.stat(partPath, followLink: false);
+    } on SftpStatusError {
+      exists = false;
+    }
+    if (exists) await _client.remove(partPath);
+    try {
+      return await _client.open(
+        partPath,
+        mode: SftpFileOpenMode.write |
+            SftpFileOpenMode.create |
+            SftpFileOpenMode.exclusive,
+      );
+    } on SftpStatusError catch (e) {
+      throw UploadStagingException(partPath, e);
+    }
+  }
+
+  /// #1248: give the `.part` the destination's ownership and permission bits,
+  /// on the open HANDLE (fsetstat — no path to swap) and BEFORE any byte is
+  /// written, so a 0600 secret is never staged world-readable. Ownership is
+  /// best-effort: a non-root server refuses a chown to another user (EPERM),
+  /// and the file then belongs to the login user — unavoidable over SFTP, so
+  /// the refusal is ignored. It runs first because chown can clear setuid
+  /// bits. The mode is NOT best-effort: if the server refuses it the upload
+  /// fails before publishing, rather than widen a secret's permissions.
+  Future<void> _applyAttrs(SftpFile file, SftpFileAttrs? keep) async {
+    if (keep == null) return;
+    final uid = keep.userID;
+    final gid = keep.groupID;
+    if (uid != null && gid != null) {
+      try {
+        await file.setStat(SftpFileAttrs(userID: uid, groupID: gid));
+      } on SftpStatusError {
+        // EPERM for a non-root login — see the doc comment.
+      }
+    }
+    final mode = keep.mode;
+    if (mode != null) {
+      await file.setStat(SftpFileAttrs(mode: SftpFileMode.value(mode.value & 4095)));
+    }
+  }
 
   static Uint8List _asBytes(List<int> chunk) =>
       chunk is Uint8List ? chunk : Uint8List.fromList(chunk);
@@ -399,12 +478,15 @@ class DartSshSftpSession implements SftpSession {
   /// (cannot vouch for an edited same-name source). When in doubt, restart.
   Future<int> _verifiedPartLength(
       String partPath, File local, int total) async {
-    final int partLen;
+    final SftpFileAttrs attrs;
     try {
-      partLen = (await _client.stat(partPath)).size ?? 0;
+      // #1248: lstat — a symlink `.part` is never read, never resumed.
+      attrs = await _client.stat(partPath, followLink: false);
     } catch (_) {
       return 0; // no `.part`
     }
+    if (!attrs.isFile) return 0; // link/dir/unknown → fresh exclusive restart
+    final partLen = attrs.size ?? 0;
     if (partLen == 0 || partLen > total) return 0;
     try {
       final remote = await _client.open(partPath);
@@ -422,7 +504,7 @@ class DartSshSftpSession implements SftpSession {
         await mine.close();
       }
     } catch (_) {
-      return 0; // unreadable `.part` → the truncating open below decides
+      return 0; // unreadable `.part` → the fresh exclusive restart decides
     }
   }
 
@@ -437,10 +519,15 @@ class DartSshSftpSession implements SftpSession {
   /// #1228 publish: the `.part` must hold exactly [expected] bytes on the
   /// server, then ONE rename moves it over [resolved] (dartssh2 4.1.0 uses
   /// posix-rename's overwrite when the server advertises it). On failure both
-  /// files stay put — the destination is never removed to make room.
+  /// files stay put — the destination is never removed to make room. #1248:
+  /// lstat, so a `.part` that became a link is reported (-1), never published.
   Future<void> _publishPart(
       String partPath, String resolved, int expected) async {
-    final size = (await _client.stat(partPath)).size ?? -1;
+    final attrs = await _client.stat(partPath, followLink: false);
+    // A server that omits the mode cannot be second-guessed; ours was just
+    // created exclusively (or lstat-verified for a resume).
+    final known = attrs.mode == null || attrs.isFile;
+    final size = known ? (attrs.size ?? -1) : -1;
     if (size != expected) throw UploadIncompleteException(size, expected);
     try {
       await _client.rename(partPath, resolved);

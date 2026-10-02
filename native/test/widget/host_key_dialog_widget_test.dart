@@ -201,6 +201,46 @@ void main() {
       expect(find.text('Confirm + connect'), findsOneWidget);
     });
 
+    // #1249: the re-confirm must give the user something to compare: the
+    // stored legacy MD5, the offered SHA256, and the commands that print both
+    // on the server.
+    testWidgets('shows the stored MD5, the offered SHA256 and both verify '
+        'commands', (tester) async {
+      const withStored = PendingHostKey(
+        host: 'server.example',
+        port: 2222,
+        keyType: 'ssh-ed25519',
+        fingerprint: 'SHA256:abcDEF123+ghi/jklMNO456pqrSTU789vwxYZ0',
+        formatChanged: true,
+        storedFingerprint: '00112233445566778899aabbccddeeff',
+      );
+      await _mountDialog(tester, pending: withStored);
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('launch')));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.text('MD5:00:11:22:33:44:55:66:77:88:99:aa:bb:cc:dd:ee:ff'),
+        findsOneWidget,
+      );
+      expect(find.text(withStored.fingerprint), findsOneWidget);
+      expect(
+        find.text('ssh-keygen -l -E md5 -f /etc/ssh/ssh_host_ed25519_key.pub'),
+        findsOneWidget,
+      );
+      expect(
+        find.text('ssh-keygen -l -f /etc/ssh/ssh_host_ed25519_key.pub'),
+        findsOneWidget,
+      );
+      expect(
+        find.textContaining(
+          'Match the OLD fingerprint on the server to be sure this is the '
+          'same host',
+        ),
+        findsOneWidget,
+      );
+    });
+
     testWidgets('Confirm resolves true, Cancel resolves false', (tester) async {
       var readResult = await _mountDialog(tester, pending: reconfirm);
       await tester.pumpAndSettle();

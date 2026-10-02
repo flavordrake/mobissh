@@ -76,6 +76,9 @@ class SharedPrefsHostKeyBackend implements HostKeyBackend {
   @override
   Future<Map<String, String>> loadAll() async {
     final prefs = await _ensure();
+    // #1249: the cache is per isolate; re-read so a write from another isolate
+    // (e.g. a UI-side backup restore) is the base of the next read-modify-write.
+    await prefs.reload();
     final raw = prefs.getString(hostKeysPrefsKey);
     if (raw == null || raw.isEmpty) return <String, String>{};
     // Corrupt data THROWS (jsonDecode's FormatException, or the not-a-Map guard)
@@ -186,21 +189,35 @@ class HostKeyStore {
       if (!_forgottenEarly.contains(k)) _trusted.putIfAbsent(k, () => v);
     });
     _hydrated = true;
-    if (loaded.keys.any(_forgottenEarly.contains)) _persist();
   }
 
-  /// Keys forgotten before hydration finished (#1235).
+  /// Keys forgotten before hydration finished (#1235), filtered out of the
+  /// hydrated map so the in-memory view can't resurrect them.
   final Set<String> _forgottenEarly = <String>{};
 
-  void _persist() {
-    // Snapshot the map at call time and queue the write behind any in-flight
-    // one, so serialized saves land in call order (#1108). saveAll is overwrite
-    // semantics; the last-queued snapshot wins. Backend errors are swallowed so
-    // a failed write never crashes the verify path.
-    final snapshot = Map<String, String>.from(_trusted);
-    _writeChain = _writeChain.then(
-      (_) => _backend.saveAll(snapshot).catchError((Object _) {}),
-    );
+  /// Persist ONE key change: set [key] to [value], or remove it when null.
+  ///
+  /// #1249: a read-modify-write of the PERSISTED map, never a snapshot of this
+  /// store's in-memory copy. A whole-map overwrite from a stale copy erased
+  /// pins other sessions saved and resurrected keys they forgot. Queued on the
+  /// write chain so changes land in call order (#1108). If the persisted map
+  /// can't be read, nothing is written (it is not ours to overwrite). Backend
+  /// errors are swallowed so a failed write never crashes the verify path.
+  void _persistKey(String key, String? value) {
+    _writeChain = _writeChain.then((_) async {
+      try {
+        final current = await _backend.loadAll();
+        if (value == null) {
+          if (current.remove(key) == null) return;
+        } else {
+          if (current[key] == value) return;
+          current[key] = value;
+        }
+        await _backend.saveAll(current);
+      } catch (_) {
+        /* storage unavailable: keep the in-memory decision only */
+      }
+    });
   }
 
   /// Returns true iff [fingerprint] matches the previously-trusted value for
@@ -263,17 +280,20 @@ class HostKeyStore {
   /// Persist a trust decision. Overwrites any prior entry. Updates the
   /// in-memory map synchronously and schedules an async backend write.
   void trust(String host, int port, String fingerprint) {
-    _trusted['$host:$port'] = fingerprint;
-    _persist();
+    final key = '$host:$port';
+    _forgottenEarly.remove(key);
+    _trusted[key] = fingerprint;
+    _persistKey(key, fingerprint);
   }
 
   /// Remove a trust entry (e.g. user rejected a rotated key).
   void forget(String host, int port) {
-    // Before hydration the map is partial: persisting it would overwrite the
-    // stored trust with a fragment. Record the forget; _hydrate applies it.
-    if (!_hydrated) _forgottenEarly.add('$host:$port');
-    final removed = _trusted.remove('$host:$port');
-    if (removed != null && _hydrated) _persist();
+    final key = '$host:$port';
+    // Before hydration the in-memory map is partial; record the forget so
+    // _hydrate doesn't load the entry back (#1235).
+    if (!_hydrated) _forgottenEarly.add(key);
+    _trusted.remove(key);
+    _persistKey(key, null);
   }
 
   /// Number of trusted hosts. Useful in tests.
