@@ -11,6 +11,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'diagnostics/connect_trace.dart';
 import 'diagnostics/crash_reporter.dart';
+import 'diagnostics/feedback_outbox.dart';
 import 'diagnostics/frame_stats.dart'
     show recordSessionLoad, startFrameStats;
 import 'platform/desktop.dart';
@@ -46,6 +47,8 @@ void main() {
     await CrashReporter.bootstrap();
     // Fire-and-forget — don't block first paint on bridge reachability.
     unawaited(CrashReporter.uploadPending());
+    // #1259: bug reports saved while offline go out on launch too.
+    unawaited(FeedbackOutbox.instance.flush());
     // Open the isolate port so the foreground task isolate can send data
     // back to the UI (#512). Android-only: platforms hosting the SessionHost
     // in-process (desktop #577, iOS #1026) have no task isolate — calling
@@ -292,6 +295,10 @@ class _RootRouterState extends ConsumerState<RootRouter> {
         }
       }
       if (next == AppLifecycleState.resumed) {
+        // #1259: coming back is the cheapest "maybe online again" signal we
+        // have (no connectivity callback in the app); the outbox's own backoff
+        // keeps repeated resumes from hammering the relay.
+        unawaited(FeedbackOutbox.instance.flush());
         // The keepalive controller already kept the SSH socket alive (#517
         // reconnect-on-transient + #512 foreground service). On resume we
         // rebind every proxy so each one re-emits its cached snapshot

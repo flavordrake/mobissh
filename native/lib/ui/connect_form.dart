@@ -27,6 +27,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../diagnostics/connect_trace.dart';
 import '../diagnostics/crash_reporter.dart';
+import '../diagnostics/feedback_outbox.dart';
 import '../services/link_verb.dart';
 import '../ssh/jump_host.dart';
 import '../ssh/ssh_connect_params.dart';
@@ -432,6 +433,8 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
       // Once we've proven network reachability, fire-and-forget a crash upload
       // sweep. Tailscale being down at boot is the common case.
       unawaited(CrashReporter.uploadPending());
+      // #1259: same proof of network for bug reports saved while offline.
+      unawaited(FeedbackOutbox.instance.flush());
       // When this chooser was pushed as a "New session" route (over a live
       // TerminalScreen), return to the terminal once the session CONNECTS — not
       // on dispatch. Staying mounted lets the chooser show the trust prompt;

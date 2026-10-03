@@ -40,7 +40,7 @@ Android is the primary platform; Linux and macOS desktop builds exist.
 - **Profiles** with host, port, user, password or key, an initial command to run after connecting, a start folder, a theme, a link browser and an optional jump host.
 - **Paste an `~/.ssh/config` Host block** to fill a profile, including `ProxyJump`. Export your profiles as an ssh_config file (no secrets in it).
 - **Jump hosts.** A profile can connect through another saved profile, like `ssh -J`, up to 3 hops, each with its own credentials and host-key check. Jumped sessions show a route icon that lists the hops.
-- **SSH key library.** Paste a key once, name it, and attach it to any number of profiles. View and copy the public key.
+- **SSH key library.** Paste a key once, name it, and attach it to any number of profiles. A key that does not parse, or a wrong passphrase, is refused when you add it. Add a key straight from the profile editor, and copy its public key from the Keys screen or the editor.
 - **Host keys.** First contact asks you to trust the fingerprint. A changed key refuses to connect and offers a Review screen with both fingerprints; the new key is never trusted in one tap. A key saved by an older version (MD5 format) asks once to re-confirm, showing the saved MD5, the new SHA256 and the `ssh-keygen` commands that print both on the server.
 - **Port forwarding.** Local forwards (`ssh -L`, bound to 127.0.0.1), optionally re-armed on every connect.
 - **Encrypted backup.** Export everything (profiles, passwords, keys, host-key trust, settings) to one passphrase-encrypted file, and import it on another device.

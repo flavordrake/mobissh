@@ -36,25 +36,33 @@ class PublicKeyInfo {
 /// or null when the key cannot be parsed. Never throws.
 PublicKeyInfo? derivePublicKeyInfo(String pem, {String? passphrase}) {
   try {
-    final pairs = SSHKeyPair.fromPem(pem, passphrase);
-    if (pairs.isEmpty) return null;
-    // The wire blob is the SSH encoding (string algo-name + algo fields) —
-    // exactly what the OpenSSH line base64s and the fingerprint hashes over.
-    final blob = pairs.first.toPublicKey().encode();
-    final type = _wireType(blob);
-    if (type == null) return null;
-    final digest = const DartSha256().hashSync(blob).bytes;
-    return PublicKeyInfo(
-      algorithm: _shortAlgorithm(type),
-      publicKeyLine: '$type ${base64.encode(blob)}',
-      // OpenSSH prints the digest base64 WITHOUT trailing '=' padding.
-      fingerprint: 'SHA256:${base64.encode(digest).replaceAll('=', '')}',
-    );
+    return parsePublicKeyInfo(pem, passphrase: passphrase);
   } catch (_) {
     // Deliberately swallowed: derivation is opportunistic; the import/restore
     // proceeds with name-only metadata. Never log the PEM or passphrase.
     return null;
   }
+}
+
+/// Strict form of [derivePublicKeyInfo] for callers that must REFUSE a key
+/// that does not parse (#1259, the library Add dialog). Throws the dartssh2
+/// error (or a [FormatException]) — map it with `keyParseFailureMessage`,
+/// never show its text: it can quote the key.
+PublicKeyInfo parsePublicKeyInfo(String pem, {String? passphrase}) {
+  final pairs = SSHKeyPair.fromPem(pem, passphrase);
+  if (pairs.isEmpty) throw const FormatException('no key in PEM');
+  // The wire blob is the SSH encoding (string algo-name + algo fields) —
+  // exactly what the OpenSSH line base64s and the fingerprint hashes over.
+  final blob = pairs.first.toPublicKey().encode();
+  final type = _wireType(blob);
+  if (type == null) throw const FormatException('malformed public key');
+  final digest = const DartSha256().hashSync(blob).bytes;
+  return PublicKeyInfo(
+    algorithm: _shortAlgorithm(type),
+    publicKeyLine: '$type ${base64.encode(blob)}',
+    // OpenSSH prints the digest base64 WITHOUT trailing '=' padding.
+    fingerprint: 'SHA256:${base64.encode(digest).replaceAll('=', '')}',
+  );
 }
 
 /// Read the leading algo-name string of an SSH wire blob (uint32 length +

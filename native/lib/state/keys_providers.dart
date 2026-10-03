@@ -6,6 +6,7 @@
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../ssh/key_parse_error.dart';
 import '../ssh/public_key_info.dart';
 import '../storage/keys_store.dart';
 import 'profiles_providers.dart'; // secretsStoreProvider
@@ -19,6 +20,16 @@ final savedKeysProvider = FutureProvider<List<SavedKey>>((ref) async {
   keys.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
   return keys;
 });
+
+/// A pasted key that [KeysManager.addKey] refused. [message] comes from
+/// `key_parse_error.dart` only, so it never carries key material.
+class KeyImportException implements Exception {
+  const KeyImportException(this.message);
+  final String message;
+
+  @override
+  String toString() => message;
+}
 
 /// CRUD across the metadata store + the vault. Private bytes are written/deleted
 /// ONLY through [SecretsStore]; metadata never carries them.
@@ -37,13 +48,36 @@ class KeysManager {
     required String pem,
     String? passphrase,
     String? algorithm,
-  }) async {
-    final ts = _now();
-    final id = 'k${ts.microsecondsSinceEpoch}';
+  }) {
     // Best-effort identity derivation (#1122): the public line + fingerprint
     // survive a phone migration in metadata and let the user match this entry
     // against authorized_keys. Null (unparseable PEM) never blocks the import.
-    final info = derivePublicKeyInfo(pem, passphrase: passphrase);
+    return _store(name, pem, passphrase,
+        derivePublicKeyInfo(pem, passphrase: passphrase), algorithm);
+  }
+
+  /// The library Add path (#1259): like [importFromPem], but the key must
+  /// parse — and decrypt with [passphrase] — BEFORE anything is written.
+  /// Throws [KeyImportException] (fixed, key-free text) and stores nothing
+  /// when it doesn't, so a bad paste fails here instead of at connect.
+  Future<SavedKey> addKey({
+    required String name,
+    required String pem,
+    String? passphrase,
+  }) async {
+    final PublicKeyInfo info;
+    try {
+      info = parsePublicKeyInfo(pem, passphrase: passphrase);
+    } catch (e) {
+      throw KeyImportException(keyParseFailureMessage(e));
+    }
+    return _store(name, pem, passphrase, info, null);
+  }
+
+  Future<SavedKey> _store(String name, String pem, String? passphrase,
+      PublicKeyInfo? info, String? algorithm) async {
+    final ts = _now();
+    final id = 'k${ts.microsecondsSinceEpoch}';
     final key = SavedKey(
       id: id,
       name: name.trim().isEmpty ? 'Imported key' : name.trim(),
