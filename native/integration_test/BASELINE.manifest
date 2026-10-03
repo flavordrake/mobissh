@@ -93,6 +93,7 @@ expect    | detection_toggle_test.dart
 expect    | disconnect_telemetry_test.dart
 expect    | disconnected_scroll_test.dart
 expect    | editor_integrity_1227_test.dart
+expect    | feedback_send_test.dart
 expect    | file_url_actions_994_test.dart
 expect    | force_repaint_robustness_918_test.dart
 expect    | ghostty_osc8_hyperlink_test.dart

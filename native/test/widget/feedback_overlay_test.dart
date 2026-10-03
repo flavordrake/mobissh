@@ -9,23 +9,49 @@
 // The submitter and version resolver are injected so the test runs with no
 // network and no platform channels.
 
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:mobissh/diagnostics/connect_trace.dart';
+import 'package:mobissh/diagnostics/feedback_outbox.dart';
 import 'package:mobissh/ui/feedback_overlay.dart';
 
-class _RecordingSubmitter implements FeedbackSubmitter {
+// In-memory stand-in for the file-backed outbox (its file I/O would not drain
+// under testWidgets' fake clock; the outbox itself is covered by
+// test/diagnostics/feedback_outbox_test.dart).
+class _RecordingSubmitter implements FeedbackOutbox {
   Map<String, Object?>? lastPayload;
   bool returnValue = true;
+  FeedbackPostOutcome? failOutcome;
+  int calls = 0;
+  int evictOnNext = 0;
+  final List<String?> submittedIds = <String?>[];
+  final List<String> discarded = <String>[];
 
   @override
-  Future<bool> submit(Map<String, Object?> payload) async {
-    lastPayload = payload;
-    return returnValue;
+  Future<OutboxSubmitResult> submit(String body, {String? id}) async {
+    calls++;
+    submittedIds.add(id);
+    lastPayload = jsonDecode(body) as Map<String, Object?>;
+    final evicted = evictOnNext;
+    evictOnNext = 0;
+    return OutboxSubmitResult(
+      id: id ?? 'report-1',
+      outcome: returnValue
+          ? FeedbackPostOutcome.delivered
+          : (failOutcome ?? FeedbackPostOutcome.failed),
+      evicted: evicted,
+    );
   }
+
+  @override
+  Future<void> discard(String id) async => discarded.add(id);
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
 // Fake capturer: bypasses RenderRepaintBoundary.toImage (which does not
@@ -41,8 +67,9 @@ Future<Uint8List> _fakeCapturer(GlobalKey key, double dpr) async {
 // own context has no Navigator ancestor). The keys give it a below-Navigator
 // context to show the sheet + confirmation from.
 Widget _harness({
-  required FeedbackSubmitter submitter,
+  required _RecordingSubmitter submitter,
   ScreenshotCapturer? capturer,
+  Future<void> Function(String payloadJson)? sharer,
 }) {
   final navigatorKey = GlobalKey<NavigatorState>();
   final messengerKey = GlobalKey<ScaffoldMessengerState>();
@@ -52,12 +79,13 @@ Widget _harness({
     builder: (context, child) => FeedbackOverlay(
       navigatorKey: navigatorKey,
       messengerKey: messengerKey,
-      submitter: submitter,
+      outbox: submitter,
       versionResolver: () async => '[1.0.0+9 deadbee]',
       screenshotCapturer: capturer ?? _fakeCapturer,
       // #1257: a fixed snapshot; the production reader is a platform-backed
       // SharedPreferences future that the test clock does not drain.
       settingsSnapshotter: () async => const {'mobissh.ui.fontSize': 15.0},
+      shareInstead: sharer ?? (_) async {},
       child: child ?? const SizedBox.shrink(),
     ),
     home: const Scaffold(body: Center(child: Text('SOME SCREEN CONTENT'))),
@@ -400,5 +428,151 @@ void main() {
     expect(find.byKey(const Key('feedback-frame-scrubber')), findsOneWidget);
     expect(find.byKey(const Key('feedback-frame-counter')), findsOneWidget);
     expect(find.byKey(const Key('feedback-preview-image')), findsOneWidget);
+  });
+
+  // ── #1259 gap 2: a failed Send must never throw the report away ────────────
+
+  Future<void> sendNote(WidgetTester tester, String note) async {
+    await tester.tap(find.byKey(const Key('feedback-affordance')));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const Key('feedback-comment-field')),
+      note,
+    );
+    await tester.pump();
+    await tester.ensureVisible(find.byKey(const Key('feedback-submit-button')));
+    await tester.tap(find.byKey(const Key('feedback-submit-button')));
+    await tester.pumpAndSettle();
+  }
+
+  testWidgets('a failed Send keeps the note and capture, with Retry + Share', (
+    tester,
+  ) async {
+    final submitter = _RecordingSubmitter()..returnValue = false;
+    await tester.pumpWidget(_harness(submitter: submitter));
+    await tester.pumpAndSettle();
+
+    await sendNote(tester, 'relay is down but my note matters');
+    expect(submitter.calls, 1);
+
+    // The sheet is still up with every field intact.
+    final field = tester.widget<TextField>(
+      find.byKey(const Key('feedback-comment-field')),
+    );
+    expect(field.controller!.text, 'relay is down but my note matters');
+    expect(find.byKey(const Key('feedback-preview-image')), findsOneWidget);
+
+    // A persistent inline error with both actions — not a vanishing toast.
+    expect(find.byKey(const Key('feedback-send-error')), findsOneWidget);
+    expect(find.byKey(const Key('feedback-retry-button')), findsOneWidget);
+    expect(
+      find.byKey(const Key('feedback-share-instead-button')),
+      findsOneWidget,
+    );
+    await tester.pump(const Duration(seconds: 10));
+    expect(find.byKey(const Key('feedback-send-error')), findsOneWidget);
+    expect(find.byKey(const Key('feedback-comment-field')), findsOneWidget);
+    // The outbox kept it: the user is told it will go out on its own.
+    expect(
+      find.textContaining('Saved — it will send automatically'),
+      findsOneWidget,
+    );
+    expect(find.text('Close'), findsOneWidget, reason: 'closing keeps it');
+  });
+
+  testWidgets('a full outbox says the oldest saved report was dropped', (
+    tester,
+  ) async {
+    final submitter = _RecordingSubmitter()
+      ..returnValue = false
+      ..evictOnNext = 1;
+    await tester.pumpWidget(_harness(submitter: submitter));
+    await tester.pumpAndSettle();
+    await sendNote(tester, 'outbox full');
+    expect(
+      find.textContaining('oldest saved report was dropped'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('a 401/403 rejection offers Share instead, not Retry', (
+    tester,
+  ) async {
+    final submitter = _RecordingSubmitter()
+      ..returnValue = false
+      ..failOutcome = FeedbackPostOutcome.rejected;
+    await tester.pumpWidget(_harness(submitter: submitter));
+    await tester.pumpAndSettle();
+    await sendNote(tester, 'wrong key build');
+    expect(find.textContaining('server refused'), findsOneWidget);
+    expect(find.byKey(const Key('feedback-retry-button')), findsNothing);
+    expect(
+      find.byKey(const Key('feedback-share-instead-button')),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('Retry re-submits the same report; success closes and confirms', (
+    tester,
+  ) async {
+    final submitter = _RecordingSubmitter()..returnValue = false;
+    await tester.pumpWidget(_harness(submitter: submitter));
+    await tester.pumpAndSettle();
+
+    await sendNote(tester, 'retry me');
+    final failedPayload = submitter.lastPayload!;
+
+    submitter.returnValue = true;
+    await tester.ensureVisible(find.byKey(const Key('feedback-retry-button')));
+    await tester.tap(find.byKey(const Key('feedback-retry-button')));
+    await tester.pump();
+    await tester.pump();
+
+    expect(submitter.calls, 2);
+    expect(
+      submitter.submittedIds,
+      [null, 'report-1'],
+      reason: 'Retry re-writes the SAME outbox entry — queued once',
+    );
+    expect(submitter.lastPayload!['comment'], 'retry me');
+    expect(
+      submitter.lastPayload!['screenshot'],
+      failedPayload['screenshot'],
+      reason: 'Retry sends the SAME capture, not a fresh one',
+    );
+    expect(find.text('Feedback sent — thanks!'), findsOneWidget);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('feedback-comment-field')), findsNothing);
+    expect(find.byKey(const Key('feedback-send-error')), findsNothing);
+  });
+
+  testWidgets('Share instead hands the full report to the bundle sharer', (
+    tester,
+  ) async {
+    String? shared;
+    final submitter = _RecordingSubmitter()..returnValue = false;
+    await tester.pumpWidget(
+      _harness(submitter: submitter, sharer: (json) async => shared = json),
+    );
+    await tester.pumpAndSettle();
+
+    await sendNote(tester, 'share this offline');
+    await tester.ensureVisible(
+      find.byKey(const Key('feedback-share-instead-button')),
+    );
+    await tester.tap(find.byKey(const Key('feedback-share-instead-button')));
+    await tester.pumpAndSettle();
+
+    expect(shared, isNotNull);
+    final decoded = jsonDecode(shared!) as Map<String, Object?>;
+    expect(decoded['comment'], 'share this offline');
+    expect(decoded.containsKey('screenshot'), isTrue);
+    expect(submitter.calls, 1, reason: 'sharing does not re-submit');
+    expect(
+      submitter.discarded,
+      ['report-1'],
+      reason: 'shared by hand — not also auto-sent later',
+    );
+    expect(find.byKey(const Key('feedback-comment-field')), findsNothing);
   });
 }
