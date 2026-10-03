@@ -683,17 +683,8 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
   Future<void> _openImportDialog() async {
     final result = await showImportProfilesDialog(context);
     if (!mounted || result == null) return;
-    final parts = <String>[];
-    if (result.added > 0) {
-      parts.add('${result.added} added');
-    }
-    if (result.updated > 0) {
-      parts.add('${result.updated} updated');
-    }
-    final msg = parts.isNotEmpty
-        ? 'Imported ${parts.join(', ')}'
-        : 'No profiles imported.';
-    showTopToast(context, msg);
+    // #1259: a partial import's skipped entries stay on screen until read.
+    await showImportOutcome(context, result);
   }
 
   /// "Export" affordance (#1124) → the encrypted-backup export dialog. The

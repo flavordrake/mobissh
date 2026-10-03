@@ -38,6 +38,7 @@ import '../storage/backup.dart';
 import '../storage/backup_restore.dart';
 import '../storage/profiles_store.dart';
 import 'revealable_field.dart';
+import 'top_toast.dart';
 
 /// Seam for the v2 envelope decrypt so widget tests can run it directly with
 /// permissive KDF bounds — the production default wraps the strict-bounds
@@ -94,6 +95,55 @@ class MethodChannelFilePickerAdapter implements FilePickerAdapter {
     if (bytes == null) return null;
     return PickedFile(name: name, bytes: bytes);
   }
+}
+
+/// #1259: the outcome of an import in the user's words — profiles, keys, and
+/// EVERY skipped entry with its reason. Pure, so it is unit-testable.
+String describeImportResult(ImportResult r) {
+  String n(int count, String one, String many) =>
+      '$count ${count == 1 ? one : many}';
+  final profiles = r.added + r.updated;
+  final parts = <String>[
+    if (profiles > 0)
+      '${n(profiles, 'profile', 'profiles')} (${[
+        if (r.added > 0) '${r.added} new',
+        if (r.updated > 0) '${r.updated} updated',
+      ].join(', ')})',
+    if (r.keysImported > 0) n(r.keysImported, 'key', 'keys'),
+  ];
+  final head =
+      parts.isEmpty ? 'No profiles imported' : 'Imported ${parts.join(', ')}';
+  if (r.errors.isEmpty) return '$head.';
+  return '$head; ${n(r.errors.length, 'entry', 'entries')} skipped: '
+      '${r.errors.join('; ')}';
+}
+
+/// #1259: report an import's outcome. A clean import is informational (top
+/// toast); one that skipped entries is shown in a dialog that stays until the
+/// user dismisses it, so a partial import is never silent.
+Future<void> showImportOutcome(BuildContext context, ImportResult r) async {
+  final summary = describeImportResult(r);
+  if (r.errors.isEmpty) {
+    showTopToast(context, summary);
+    return;
+  }
+  await showDialog<void>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      key: const Key('import-summary-dialog'),
+      title: const Text('Some entries were skipped'),
+      content: SingleChildScrollView(
+        child: Text(summary, key: const Key('import-summary-text')),
+      ),
+      actions: [
+        TextButton(
+          key: const Key('import-summary-ok'),
+          onPressed: () => Navigator.of(ctx).pop(),
+          child: const Text('OK'),
+        ),
+      ],
+    ),
+  );
 }
 
 /// Show the import dialog. Resolves to the [ImportResult] on success, or
@@ -280,10 +330,16 @@ class _ImportProfilesDialogState extends ConsumerState<ImportProfilesDialog> {
         restoreCommands: _restoreCommands,
       );
       if (!mounted) return;
-      if (result.added == 0 && result.updated == 0 && result.errors.isNotEmpty) {
+      // #1259: stay open only when NOTHING was written. Keys are written even
+      // when every profile is rejected, so that case closes with the result
+      // and the caller lists every skipped entry.
+      if (result.added == 0 &&
+          result.updated == 0 &&
+          result.keysImported == 0 &&
+          result.errors.isNotEmpty) {
         setState(() {
           _busy = false;
-          _error = result.errors.first;
+          _error = result.errors.join('\n');
         });
         return;
       }

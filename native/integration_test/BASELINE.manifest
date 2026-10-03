@@ -69,6 +69,8 @@ expect    | active_session_reconnect_test.dart
 expect    | attention_host_suppression_test.dart
 expect    | attention_signal_measurement_test.dart
 expect    | background_snapshot_gate_test.dart
+# #1259: new, not yet device-run (fleet emulator down at authoring).
+expect    | backup_v2_roundtrip_test.dart
 expect    | browser_targets_1196_test.dart
 expect    | cc_attach_existing_test.dart
 expect    | cc_capture_attach_test.dart
