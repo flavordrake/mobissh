@@ -33,7 +33,7 @@
 #   elsewhere | <file>_test.dart       | <the runner that owns it>
 # No field may contain a `|`. Every known-red needs BOTH an issue and a reason.
 
-accepted  | 20260920T155254Z | expect=84 | known-red=10 | elsewhere=1
+accepted  | 20260920T155254Z | expect=85 | known-red=10 | elsewhere=1
 
 # --- not this suite's to run ------------------------------------------------
 # Cross-checked against the test's own `// Runner:` header: a test declares its
@@ -69,6 +69,8 @@ expect    | active_session_reconnect_test.dart
 expect    | attention_host_suppression_test.dart
 expect    | attention_signal_measurement_test.dart
 expect    | background_snapshot_gate_test.dart
+# #1259: new, not yet device-run (fleet emulator down at authoring).
+expect    | backup_v2_roundtrip_test.dart
 expect    | browser_targets_1196_test.dart
 expect    | cc_attach_existing_test.dart
 expect    | cc_capture_attach_test.dart
