@@ -75,6 +75,10 @@ const Set<String> _knownFontFamilies = {
   'JetBrainsMono',
   'FiraCode',
   'CascadiaCode',
+  'RobotoMono',
+  'UbuntuMono',
+  'Cousine',
+  'IosevkaTerm',
 };
 
 /// Terminal backend ids — TerminalBackend.values names.
