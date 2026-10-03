@@ -110,6 +110,7 @@ expect    | import_smoke_test.dart
 expect    | initial_command_smoke_test.dart
 expect    | iosevka_font_render_1256_test.dart
 expect    | jump_host_1183_test.dart
+expect    | key_library_connect_1259_test.dart
 expect    | keyboard_resize_sizing_922_test.dart
 expect    | link_highlight_gutter_geometry_test.dart
 expect    | markdown_media_fill_test.dart

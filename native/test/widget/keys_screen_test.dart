@@ -14,6 +14,8 @@ import 'package:mobissh/storage/profiles_store.dart';
 import 'package:mobissh/storage/secrets_store.dart';
 import 'package:mobissh/ui/keys_screen.dart';
 
+import '../support/test_keys.dart';
+
 Future<void> _pump(
   WidgetTester tester, {
   required KeysStore keysStore,
@@ -88,7 +90,8 @@ void main() {
       find.byKey(const ValueKey('keys-add-name')),
       'deploy key',
     );
-    const pem = '-----BEGIN OPENSSH PRIVATE KEY-----\nabc\n-----END-----';
+    // A real key: #1259 refuses one that does not parse.
+    const pem = kTestEd25519Pem;
     await tester.enterText(find.byKey(const ValueKey('keys-add-pem')), pem);
     await tester.tap(find.byKey(const ValueKey('keys-add-save')));
     await tester.pumpAndSettle();
@@ -97,7 +100,7 @@ void main() {
     expect(keys.map((k) => k.name), ['deploy key']);
     // The PEM went to the vault, not the metadata store.
     final stored = await secrets.read(keys.single.vaultId);
-    expect(stored?['data'], pem);
+    expect(stored?['data'], pem.trim());
     expect(keys.single.toJson().toString(), isNot(contains('OPENSSH')));
     // The new key shows in the list.
     expect(find.text('deploy key'), findsOneWidget);
