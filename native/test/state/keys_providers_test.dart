@@ -280,6 +280,98 @@ void main() {
     });
   });
 
+  group('addKey validates before storing (#1259)', () {
+    Future<void> expectNothingStored(
+      ProviderContainer c,
+      InMemorySecretsBackend backend,
+    ) async {
+      expect(await backend.readAll(), isEmpty, reason: 'no vault write');
+      expect(await c.read(keysStoreProvider).load(), isEmpty,
+          reason: 'no metadata write');
+    }
+
+    test('invalid PEM throws a key-free error and stores nothing', () async {
+      final backend = InMemorySecretsBackend();
+      final c = makeContainer(SecretsStore(backend: backend));
+      const garbage = '-----BEGIN OPENSSH PRIVATE KEY-----\n'
+          'c2VjcmV0LW1hdGVyaWFs\n-----END OPENSSH PRIVATE KEY-----';
+      await expectLater(
+        c.read(keysManagerProvider).addKey(name: 'bad', pem: garbage),
+        throwsA(isA<KeyImportException>()
+            .having((e) => e.message, 'message', startsWith("Couldn't read"))
+            .having((e) => e.message, 'message',
+                isNot(contains('c2VjcmV0'))),
+      ));
+      await expectNothingStored(c, backend);
+    });
+
+    test('plain text that is not a key throws and stores nothing', () async {
+      final backend = InMemorySecretsBackend();
+      final c = makeContainer(SecretsStore(backend: backend));
+      await expectLater(
+        c.read(keysManagerProvider).addKey(name: 'bad', pem: 'not a key'),
+        throwsA(isA<KeyImportException>()),
+      );
+      await expectNothingStored(c, backend);
+    });
+
+    test('encrypted key with a wrong passphrase throws a passphrase error',
+        () async {
+      final backend = InMemorySecretsBackend();
+      final c = makeContainer(SecretsStore(backend: backend));
+      await expectLater(
+        c.read(keysManagerProvider).addKey(
+            name: 'locked', pem: kTestEncryptedPem, passphrase: 'wrong'),
+        throwsA(isA<KeyImportException>()
+            .having((e) => e.message, 'message', contains('passphrase'))),
+      );
+      await expectNothingStored(c, backend);
+    });
+
+    test('encrypted key with NO passphrase throws a passphrase error',
+        () async {
+      final backend = InMemorySecretsBackend();
+      final c = makeContainer(SecretsStore(backend: backend));
+      await expectLater(
+        c.read(keysManagerProvider).addKey(name: 'locked', pem: kTestEncryptedPem),
+        throwsA(isA<KeyImportException>()
+            .having((e) => e.message, 'message', contains('passphrase'))),
+      );
+      await expectNothingStored(c, backend);
+    });
+
+    test('encrypted key with the right passphrase is stored, vault-only',
+        () async {
+      final secrets = SecretsStore(backend: InMemorySecretsBackend());
+      final c = makeContainer(secrets);
+      final key = await c.read(keysManagerProvider).addKey(
+          name: 'enc',
+          pem: kTestEncryptedPem,
+          passphrase: kTestEncryptedPassphrase);
+      expect(key.fingerprint, kTestEncryptedFingerprint);
+      final stored = await secrets.read(key.vaultId);
+      expect(stored?['data'], kTestEncryptedPem);
+      expect(stored?['passphrase'], kTestEncryptedPassphrase);
+      final json =
+          (await c.read(keysStoreProvider).load()).single.toJson().toString();
+      expect(json, isNot(contains('PRIVATE')));
+      expect(json, isNot(contains(kTestEncryptedPassphrase)));
+    });
+
+    test('valid unencrypted key is stored with its derived identity',
+        () async {
+      final secrets = SecretsStore(backend: InMemorySecretsBackend());
+      final c = makeContainer(secrets);
+      final key = await c
+          .read(keysManagerProvider)
+          .addKey(name: 'plain', pem: kTestEd25519Pem);
+      expect(key.publicKey, kTestEd25519PublicLine);
+      expect(key.fingerprint, kTestEd25519Fingerprint);
+      expect((await secrets.read(key.vaultId))?['data'], kTestEd25519Pem);
+      expect((await c.read(keysStoreProvider).load()).single.name, 'plain');
+    });
+  });
+
   group('public key derivation at write time (#1122)', () {
     test('importFromPem populates publicKey/fingerprint/algorithm; metadata '
         'still carries no private material', () async {

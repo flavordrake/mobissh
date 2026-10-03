@@ -4,7 +4,7 @@
 // bytes live solely in the vault and are NEVER rendered or logged here.
 //
 // Add: paste a PEM/OpenSSH private key + a name (+ optional passphrase) →
-// [KeysManager.importFromPem]. Per row: Rename ([KeysManager.rename]) and Delete
+// [KeysManager.addKey], which refuses a key that doesn't parse (#1259). Per row: Rename ([KeysManager.rename]) and Delete
 // ([KeysManager.delete], warning when profiles still reference the key by its
 // `keyVaultId`). Generation is Slice 2, out of scope here.
 
@@ -52,7 +52,7 @@ class _KeysScreenState extends ConsumerState<KeysScreen> {
       appBar: AppBar(title: const Text('SSH keys')),
       floatingActionButton: FloatingActionButton.extended(
         key: const ValueKey('keys-add-fab'),
-        onPressed: () => _addKey(context, ref),
+        onPressed: () => showAddKeyDialog(context),
         icon: const Icon(Icons.add),
         label: const Text('Add key'),
       ),
@@ -90,19 +90,19 @@ class _KeysScreenState extends ConsumerState<KeysScreen> {
     );
   }
 
-  Future<void> _addKey(BuildContext context, WidgetRef ref) async {
-    final input = await showDialog<_AddKeyInput>(
-      context: context,
-      builder: (_) => const _AddKeyDialog(),
-    );
-    if (input == null) return;
-    await ref.read(keysManagerProvider).importFromPem(
-          name: input.name,
-          pem: input.pem,
-          passphrase: input.passphrase,
-        );
-    if (context.mounted) showTopToast(context, 'Key added');
-  }
+}
+
+/// The Add-key dialog (#1259), shared by the Keys screen and the profile
+/// editor. It validates the key before storing anything and stays open with
+/// an inline error until the key parses. Resolves to the stored key — the
+/// only case that toasts "Key added" — or null when cancelled.
+Future<SavedKey?> showAddKeyDialog(BuildContext context) async {
+  final key = await showDialog<SavedKey>(
+    context: context,
+    builder: (_) => const _AddKeyDialog(),
+  );
+  if (key != null && context.mounted) showTopToast(context, 'Key added');
+  return key;
 }
 
 /// One library-key row: name + optional algorithm/fingerprint, plus a Rename /
@@ -245,28 +245,26 @@ class _KeyRow extends ConsumerWidget {
   }
 }
 
-/// The values collected by [_AddKeyDialog].
-class _AddKeyInput {
-  const _AddKeyInput({required this.name, required this.pem, this.passphrase});
-  final String name;
-  final String pem;
-  final String? passphrase;
-}
-
 /// Add-key dialog: name + pasted PEM + optional passphrase. The PEM is a key
 /// blob so it is shown in a plain multiline field (not obscured), but it is
-/// NEVER logged — it goes straight to the vault via the manager.
-class _AddKeyDialog extends StatefulWidget {
+/// NEVER logged — it goes straight to the vault via the manager, and only
+/// after [KeysManager.addKey] has parsed it (#1259).
+class _AddKeyDialog extends ConsumerStatefulWidget {
   const _AddKeyDialog();
 
   @override
-  State<_AddKeyDialog> createState() => _AddKeyDialogState();
+  ConsumerState<_AddKeyDialog> createState() => _AddKeyDialogState();
 }
 
-class _AddKeyDialogState extends State<_AddKeyDialog> {
+class _AddKeyDialogState extends ConsumerState<_AddKeyDialog> {
   final _nameCtrl = TextEditingController();
   final _pemCtrl = TextEditingController();
   final _passphraseCtrl = TextEditingController();
+  bool _busy = false;
+
+  /// Inline, key-free reason the last Add was refused (#1259). A field error
+  /// the user acts on in place, never a toast.
+  String? _error;
 
   @override
   void dispose() {
@@ -276,20 +274,29 @@ class _AddKeyDialogState extends State<_AddKeyDialog> {
     super.dispose();
   }
 
-  void _submit() {
+  Future<void> _submit() async {
     final pem = _pemCtrl.text.trim();
     if (pem.isEmpty) {
-      showTopToast(context, 'Paste a private key');
+      setState(() => _error = 'Paste a private key');
       return;
     }
     final passphrase = _passphraseCtrl.text;
-    Navigator.of(context).pop(
-      _AddKeyInput(
-        name: _nameCtrl.text,
-        pem: pem,
-        passphrase: passphrase.isEmpty ? null : passphrase,
-      ),
-    );
+    setState(() => _busy = true);
+    try {
+      final key = await ref.read(keysManagerProvider).addKey(
+            name: _nameCtrl.text,
+            pem: pem,
+            passphrase: passphrase.isEmpty ? null : passphrase,
+          );
+      if (mounted) Navigator.of(context).pop(key);
+    } on KeyImportException catch (e) {
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          _error = e.message;
+        });
+      }
+    }
   }
 
   @override
@@ -333,6 +340,14 @@ class _AddKeyDialogState extends State<_AddKeyDialog> {
               controller: _passphraseCtrl,
               labelText: 'Passphrase (optional)',
             ),
+            if (_error != null) ...[
+              const SizedBox(height: 12),
+              Text(
+                _error!,
+                key: const ValueKey('keys-add-error'),
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
+            ],
           ],
         ),
       ),
@@ -343,7 +358,7 @@ class _AddKeyDialogState extends State<_AddKeyDialog> {
         ),
         FilledButton(
           key: const ValueKey('keys-add-save'),
-          onPressed: _submit,
+          onPressed: _busy ? null : _submit,
           child: const Text('Add'),
         ),
       ],
