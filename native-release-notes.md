@@ -6,6 +6,17 @@ verify". Each bullet: ONE short line, what changed — NOT how to test it. Keep
 internal/test/CI/refactor work OUT. **Update this every release** (gen-apk-install-page.sh
 warns when native/lib has commits newer than this file).
 
+## v0.1.13-dev+199 (2026-10-03): Iosevka, tidier settings, one-tap updates
+- **Iosevka is a terminal font option.** Pick it in the session menu or as the default in Settings. Profiles and backups now also keep Roboto Mono, Ubuntu Mono and Cousine instead of resetting them. (#1256) **Device-test:** switch a live session to Iosevka.
+- **Settings are reorganised into five sections.** The per-kind link switches and the exceptions list live in the Detection Lab, and rarely used items hide behind "Show experimental settings" at the bottom of Advanced. Hidden settings keep their values. (#1257) **Device-test:** walk the new Settings page.
+- **Updates take fewer taps.** On Wi-Fi the update downloads in the background, so one tap opens the installer. Inside a session you get a one-time "Update available" snackbar and a session-menu row. After updating, "Updated to …" offers What's new. (#1258) **Device-test:** take the next update over Wi-Fi.
+
+## v0.1.12+198 (2026-10-02): release: byte-exact SFTP round trip, host-key hardening
+- **Uploads, resumes and saves are byte-exact and atomic.** An interrupted upload resumes only from a verified prefix. Saving keeps the file's permissions (a 0600 file stays 0600) and never writes through a symlink. (#1228, #1248)
+- **The editor won't change bytes you didn't edit.** Non-UTF-8 files open read-only with an explanation; a BOM and CRLF line endings survive a save. (#1227)
+- **Host keys:** one shared trust store, and the one-time re-confirm now shows the old MD5 next to the new SHA256 with both ssh-keygen commands. (#1249)
+- **Privacy:** keystrokes typed while no shell is open are dropped ("input not sent"), never kept in scrollback; logs no longer record password length or key fragments. (#1229, #1252)
+
 ## v0.1.12-rc.4+197 (2026-10-01) — self-update, safe host-key changes, SFTP download fix
 - **SFTP downloads no longer truncate.** Files over 32 KiB used to arrive cut short with a success message. Every download (browser, viewer Download/Share, PDF and image viewers, editor load) now checks the bytes received against the server's size and fails loudly on a mismatch. (#1225) **Device-test:** download a file over 100 KB; edit and save a markdown file over 32 KB.
 - **One-time "Re-confirm host key" for each saved host.** The SSH library moved to dartssh2 4.1.0 and fingerprints are now SHA256, so every saved host (jump hops too) asks once. Errors for legacy algorithms and rekeys are readable now, and a server-sent disconnect keeps auto-reconnect. (#1226) **Device-test:** compare each prompt with `ssh-keygen -l -f /etc/ssh/ssh_host_<type>_key.pub` on the server.
