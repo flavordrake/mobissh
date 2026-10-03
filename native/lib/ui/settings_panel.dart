@@ -203,20 +203,24 @@ class SettingsPanel extends ConsumerWidget {
     final picked = await showModalBottomSheet<String>(
       context: context,
       builder: (sheetContext) {
+        // Scrollable: seven faces (#1256) overflow the half-height sheet on a
+        // short or landscape screen.
         return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              for (final f in terminalFontFamilies)
-                ListTile(
-                  key: ValueKey('default-font-option-${f.id}'),
-                  title: Text(f.label),
-                  trailing: f.id == current
-                      ? const Icon(Icons.check)
-                      : null,
-                  onTap: () => Navigator.of(sheetContext).pop(f.id),
-                ),
-            ],
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                for (final f in terminalFontFamilies)
+                  ListTile(
+                    key: ValueKey('default-font-option-${f.id}'),
+                    title: Text(f.label),
+                    trailing: f.id == current
+                        ? const Icon(Icons.check)
+                        : null,
+                    onTap: () => Navigator.of(sheetContext).pop(f.id),
+                  ),
+              ],
+            ),
           ),
         );
       },

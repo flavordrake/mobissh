@@ -241,6 +241,10 @@ class SavedProfile {
     'JetBrainsMono',
     'FiraCode',
     'CascadiaCode',
+    'RobotoMono',
+    'UbuntuMono',
+    'Cousine',
+    'IosevkaTerm',
   };
 
   /// Validate a raw stored font family. Returns the value only when it is a
