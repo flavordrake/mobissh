@@ -77,7 +77,7 @@ The native app is the product; this is its gate.
   unambiguous container, so a hard-coded `test-sshd` seeds the wrong sshd.
 - **The suite enforces an ACCEPTED BASELINE, not an all-green run (#1101/#1205).**
   `native/integration_test/BASELINE.manifest` is the record. Its `accepted` line is
-  the tally (currently 84 expected-pass, 10 known-red each with a one-line cause and
+  the tally (currently 87 expected-pass, 10 known-red each with a one-line cause and
   the issue that owns it, and 1 `elsewhere` test owned by another runner). The
   suite's verdict:
   - an **expected-pass** test fails → the suite FAILS (the reason the gate exists)
