@@ -29,6 +29,10 @@
          system installer. Removed from the Play bundle by
          src/play/AndroidManifest.xml (R13). -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
+    <!-- #1258 R14: pre-download an update only on an unmetered network
+         (ConnectivityManager.isActiveNetworkMetered needs this; normal,
+         install-time permission). -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
     <!-- networkSecurityConfig (#1037): permit cleartext HTTP to 127.0.0.1 ONLY
          (the HTML viewer's on-device SFTP loopback resolver); everything else
          stays cleartext-blocked. See res/xml/network_security_config.xml. -->

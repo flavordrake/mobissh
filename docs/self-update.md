@@ -18,7 +18,7 @@ The sideloaded Android app notices a newer published build, and with one tap dow
   "url": "https://mobissh.tailbe5094.ts.net/mobissh-native-0.1.12-rc.4+191-20260927T172906+0000.apk",
   "sha256": "<64 lowercase hex of that exact file>",
   "builtAt": "2026-09-27T17:29:06Z",
-  "notes": "<one line from the ship message, may be empty>"
+  "notes": "<top section of native-release-notes.md (#1258), else one line from the ship message; may be empty>"
 }
 ```
 
@@ -47,6 +47,21 @@ The sideloaded Android app notices a newer published build, and with one tap dow
 - **R12** Downloaded APKs in `cache/updates/` are removed on the next launch after a successful update, and on any refusal.
 - **R13** `REQUEST_INSTALL_PACKAGES`, the updater FileProvider and the whole update UI are EXCLUDED from the Play AAB (Google restricts the permission, and a Play-installed copy can't be upgraded by our key anyway). Mechanism is the implementer's choice (manifest overlay for the sideload build, or `tools:node="remove"` in the AAB path) but it must be test-asserted on the built artifacts.
 
+### Fewer taps (#1258)
+
+- **R14** Pre-download. When a check returns a newer build and the network is unmetered (`UpdatesChannel.isUnmetered`, `ConnectivityManager.isActiveNetworkMetered`; no plugin), the foreground app downloads and verifies it exactly as R8 does, and writes it to `cache/updates/`. The banner then reads "Update ready: A → B" and Install hands off with no download wait. On a metered network nothing is fetched until the tap. A pre-download failure is quiet; the tap then downloads. The keep-alive service never does this work (D3).
+- **R15** Resume after the grant. On `needsPermission` the verified file is KEPT. On the next resume, if `canInstallPackages` is now true, the app hands that file off once, with no second download and no second Install tap. Before any hand-off of a stored file (pre-downloaded or kept), its sha256 is checked again; a mismatch is deleted and downloaded again. R10 still runs in Kotlin on every hand-off.
+- **R16** Post-update notice. `mobissh.update.lastRun` = `{"v":1,"build":B}`. On launch: no `MOBISSH_BUILD` → nothing; nothing stored or a corrupt value → store silently; same build → nothing; lower running build → store silently; higher running build → the snackbar "Updated to <version>", then store. "What's new" opens the notes saved at hand-off (`mobissh.update.pending` = `{"v":1,"build","version","notes"}`), so they show offline; with no saved notes for this build, the snackbar has no action. The manifest `notes` field carries the TOP section of `native-release-notes.md` (`scripts/release-notes-top.sh`); without one it stays the ship-commit subject.
+- In a session: a one-time snackbar "Update B available" with Install (once per build per process, not after Later), and an "Install update B" row at the top of the session menu while an update is on offer.
+
+Taps (the Android installer's Update and Open cannot be skipped for a sideload):
+
+| Path | Before | After |
+|---|---|---|
+| From home, permission granted | 3, plus the download wait | 3, no wait on Wi-Fi |
+| From a live session | 5 | 3 (snackbar Install → Update → Open), or 4 via the menu row |
+| First update ever | 6, with a second download | 5 (Install → toggle → Back → Update → Open) |
+
 ## Decisions
 
 - **D1** Integer build ordinal, not semver. B never resets and the ship script already refuses to regress it.
@@ -68,3 +83,4 @@ The sideloaded Android app notices a newer published build, and with one tap dow
 - **A4** (slice 2) installer: sha mismatch → nothing written; match → written; refused hand-off → file deleted; progress with and without Content-Length.
 - **A5** (slice 2) Kotlin/R10: an APK with a different package name is refused; an APK signed by a different key is refused; our own APK is accepted. On the emulator: sideload a debug-signed build of the app, point the checker at a manifest for a release-signed build, and assert the refusal; then the happy path reaches the system installer screen.
 - **A6** (slice 2) Play build: the AAB's merged manifest has no `REQUEST_INSTALL_PACKAGES` and no updater provider.
+- **A7** (#1258) headless: pre-download only when unmetered; a stored file is re-verified and handed off with no request; a mismatched one is re-fetched; `needsPermission` keeps the file and the resume with the grant hands off exactly once; the post-update decision table, corrupt values, once-only; the in-session snackbar once per build; the menu row; What's new. Infra: the notes extraction. Device (`self_update_1216_test.dart`): pre-download → one tap → the system installer with no second download; the post-update snackbar and What's new.

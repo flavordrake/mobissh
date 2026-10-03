@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# scripts/gen-android-latest-json.sh DIST_DIR STAMPED_APK VERSION SERVE_HOST [NOTES]
+# scripts/gen-android-latest-json.sh DIST_DIR STAMPED_APK VERSION SERVE_HOST [NOTES] [NOTES_FILE]
 #
 # Writes DIST_DIR/android-latest.json, the self-update manifest the sideloaded
 # app polls (#1215, contract pinned in docs/self-update.md). Split out of
@@ -13,13 +13,16 @@
 #
 # VERSION is the full pubspec string x.y.z[-STAGE]+B; `build` is B as an integer.
 # NOTES: only its first line is kept (may be empty).
+# NOTES_FILE (#1258): a release-notes file; when it has a `## ` section, that
+# TOP section (multi-line) becomes `notes` instead — the app's "What's new".
 set -euo pipefail
 
-if [[ "$#" -lt 4 || "$#" -gt 5 ]]; then
-  echo "! usage: $0 DIST_DIR STAMPED_APK VERSION SERVE_HOST [NOTES]" >&2
+if [[ "$#" -lt 4 || "$#" -gt 6 ]]; then
+  echo "! usage: $0 DIST_DIR STAMPED_APK VERSION SERVE_HOST [NOTES] [NOTES_FILE]" >&2
   exit 2
 fi
 DIST="$1"; STAMPED="$2"; VERSION="$3"; SERVE_HOST="${4%/}"; NOTES="${5:-}"
+NOTES_FILE="${6:-}"
 
 APK="${DIST}/${STAMPED}"
 if [[ ! -f "$APK" ]]; then
@@ -44,6 +47,10 @@ if [[ ! "$SHA" =~ ^[0-9a-f]{64}$ ]]; then
 fi
 
 NOTES="${NOTES%%$'\n'*}"
+if [[ -n "$NOTES_FILE" ]]; then
+  TOP="$("$(dirname "$0")/release-notes-top.sh" "$NOTES_FILE")"
+  if [[ -n "$TOP" ]]; then NOTES="$TOP"; fi
+fi
 BUILT_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 TMP="$(mktemp "${DIST}/.android-latest.json.XXXXXX")"

@@ -159,11 +159,16 @@ fi
 
 # #1215 R1: the self-update manifest goes LAST, once the APK it names is in
 # place. sha256 is of the published stamped arm64 file; written atomically.
-# Notes default to the ship commit's subject (ship-native.sh commits, then execs us).
+# Notes: the top section of native-release-notes.md (#1258, the app's "What's
+# new"), else the ship commit's subject (ship-native.sh commits, then execs us).
+# An explicit MOBISSH_RELEASE_NOTES wins over both.
 RELEASE_NOTES="${MOBISSH_RELEASE_NOTES:-$(git -C "$REPO_ROOT" log -1 --format=%s)}"
+NOTES_FILE="${REPO_ROOT}/native-release-notes.md"
+if [[ -n "${MOBISSH_RELEASE_NOTES:-}" ]]; then NOTES_FILE=""; fi
 log "writing ${NATIVE_DIST_HOST}/android-latest.json"
 "${REPO_ROOT}/scripts/gen-android-latest-json.sh" \
-  "$NATIVE_DIST_HOST" "$STAMPED" "$APP_VERSION" "$SERVE_HOST" "$RELEASE_NOTES"
+  "$NATIVE_DIST_HOST" "$STAMPED" "$APP_VERSION" "$SERVE_HOST" "$RELEASE_NOTES" \
+  "$NOTES_FILE"
 
 echo "+ PUBLISHED"
 echo "+ install page (bookmark this, refresh for latest):"

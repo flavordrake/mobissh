@@ -41,6 +41,7 @@ import 'port_forwards_sheet.dart';
 import 'session_route_details.dart';
 import 'session_state_dot.dart';
 import 'top_toast.dart';
+import 'update_banner.dart';
 
 /// Opens the session menu as a NON-MODAL overlay anchored to the bottom, above
 /// the keyboard. Returns once dismissed (outside tap or an action closes it).
@@ -501,6 +502,8 @@ class SessionMenu extends ConsumerWidget {
               ),
             ),
           ),
+          // #1258: "Install update B" while an update is on offer.
+          UpdateMenuRow(onClose: onClose),
           if (sessions.entries.isEmpty)
             const Padding(
               padding: EdgeInsets.all(16),

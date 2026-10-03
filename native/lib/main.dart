@@ -149,6 +149,8 @@ class _RootRouterState extends ConsumerState<RootRouter> {
             .read(updateInstallerProvider)
             .cleanup(runningBuild: ref.read(runningBuildProvider)),
       );
+      // #1258 R16: "Updated to <version>" once, after a self-update.
+      unawaited(showPostUpdateNoticeIfAny(context, ref));
     });
   }
 
@@ -221,6 +223,10 @@ class _RootRouterState extends ConsumerState<RootRouter> {
     // router unmounts to show TerminalScreen), this provider rebinds every
     // live session on resume even while the user is on the terminal screen.
     ref.watch(resumeRebindListenerProvider);
+
+    // #1258 R5/R14: keep the update check live app-wide (start + resume, also
+    // with a session in front) and pre-download an offer on unmetered networks.
+    ref.watch(updatePrefetchProvider);
 
     // #847: when the front-most session changes while the app is FOREGROUNDED
     // (a tab switch — `sessionsProvider.notifier.setActive`), push the new
