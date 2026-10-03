@@ -12,6 +12,7 @@ import 'package:share_plus/share_plus.dart';
 import '../diagnostics/connect_trace.dart';
 import '../diagnostics/crash_reporter.dart';
 import '../diagnostics/feedback_bundle.dart';
+import '../diagnostics/feedback_outbox.dart';
 import '../diagnostics/frame_stats.dart' show frameStatsSnapshot;
 import '../diagnostics/gesture_trace.dart';
 import '../diagnostics/settings_snapshot.dart';
@@ -35,11 +36,15 @@ class DiagnosticsSection extends StatefulWidget {
   /// standalone uses (tests) keep them.
   final bool experimental;
 
+  /// #1259: the bug-report outbox; null = [FeedbackOutbox.instance].
+  final FeedbackOutbox? outbox;
+
   const DiagnosticsSection({
     super.key,
     this.onShare,
     this.onShareFeedback,
     this.experimental = true,
+    this.outbox,
   });
 
   @override
@@ -48,6 +53,14 @@ class DiagnosticsSection extends StatefulWidget {
 
 class _DiagnosticsSectionState extends State<DiagnosticsSection> {
   Future<_DiagnosticsSnapshot>? _future;
+
+  // #1259: bug reports saved while offline. Loaded separately so outbox I/O
+  // never holds up the crash rows.
+  Future<OutboxStatus>? _outboxFuture;
+  String? _outboxNote;
+  bool _outboxBusy = false;
+
+  FeedbackOutbox get _outbox => widget.outbox ?? FeedbackOutbox.instance;
 
   @override
   void initState() {
@@ -58,7 +71,107 @@ class _DiagnosticsSectionState extends State<DiagnosticsSection> {
   void _refresh() {
     setState(() {
       _future = _load();
+      _outboxFuture = _outbox.status();
     });
+  }
+
+  Future<void> _sendOutboxNow() async {
+    setState(() => _outboxBusy = true);
+    final r = await _outbox.flush(auto: false);
+    if (!mounted) return;
+    setState(() {
+      _outboxBusy = false;
+      _outboxNote = r.skipped
+          ? 'A send is already in progress.'
+          : 'Sent ${r.sent}'
+                '${r.failed > 0 ? '; ${r.failed} still waiting (offline?)' : ''}'
+                '${r.rejected > 0 ? '; ${r.rejected} refused by the server' : ''}.';
+    });
+    _refresh();
+  }
+
+  Future<void> _discardOutbox() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Discard saved bug reports?'),
+        content: const Text('They will not be sent.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Keep'),
+          ),
+          TextButton(
+            key: const ValueKey('outbox-discard-confirm'),
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Discard'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    await _outbox.discardAll();
+    if (!mounted) return;
+    setState(() => _outboxNote = 'Saved bug reports discarded.');
+    _refresh();
+  }
+
+  Widget _buildOutboxRow() {
+    return FutureBuilder<OutboxStatus>(
+      future: _outboxFuture,
+      builder: (context, snap) {
+        final s = snap.data ?? const OutboxStatus();
+        if (s.total == 0 && _outboxNote == null) {
+          return const SizedBox.shrink();
+        }
+        final extra = <String>[
+          if (s.rejected > 0) '${s.rejected} refused by the server',
+          if (s.unconfirmed > 0)
+            '${s.unconfirmed} interrupted mid-upload (not resent)',
+          if (s.corrupt > 0) '${s.corrupt} unreadable',
+        ];
+        return Column(
+          key: const ValueKey('outbox-row'),
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.outbox_outlined),
+              title: Text(
+                s.pending == 1
+                    ? '1 bug report waiting to send'
+                    : '${s.pending} bug reports waiting to send',
+                key: const ValueKey('outbox-status'),
+              ),
+              subtitle: Text(
+                [...extra, ?_outboxNote].join(' · '),
+                key: const ValueKey('outbox-note'),
+              ),
+            ),
+            if (s.total > 0)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Wrap(
+                  spacing: 8,
+                  children: [
+                    OutlinedButton(
+                      key: const ValueKey('outbox-send-now'),
+                      onPressed: _outboxBusy || s.pending == 0
+                          ? null
+                          : _sendOutboxNow,
+                      child: const Text('Send now'),
+                    ),
+                    TextButton(
+                      key: const ValueKey('outbox-discard'),
+                      onPressed: _outboxBusy ? null : _discardOutbox,
+                      child: const Text('Discard'),
+                    ),
+                  ],
+                ),
+              ),
+          ],
+        );
+      },
+    );
   }
 
   Future<_DiagnosticsSnapshot> _load() async {
@@ -202,6 +315,7 @@ class _DiagnosticsSectionState extends State<DiagnosticsSection> {
                     : '$pending crash report${pending == 1 ? '' : 's'} pending upload.',
               ),
             ),
+            _buildOutboxRow(),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
               child: Column(

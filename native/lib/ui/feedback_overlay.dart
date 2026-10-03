@@ -25,7 +25,6 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
-import 'package:http/http.dart' as http;
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:share_plus/share_plus.dart';
 
@@ -33,8 +32,9 @@ import 'package:mobissh/diagnostics/connect_trace.dart';
 import 'package:mobissh/diagnostics/detection_geom.dart'
     show activeDetectionGeomSnapshot;
 import 'package:mobissh/diagnostics/diagnostics_config.dart'
-    show feedbackEndpoint, feedbackKey, kRawContentDiagnosticsEnabled;
+    show kRawContentDiagnosticsEnabled;
 import 'package:mobissh/diagnostics/feedback_bundle.dart' show scrubSecrets;
+import 'package:mobissh/diagnostics/feedback_outbox.dart';
 import 'package:mobissh/diagnostics/frame_stats.dart'
     show frameStatsLine, frameStatsSnapshot;
 import 'package:mobissh/diagnostics/paint_stats.dart'
@@ -231,42 +231,6 @@ String? pngBytesToDataUrl(Uint8List bytes) {
   return 'data:image/png;base64,${base64Encode(bytes)}';
 }
 
-/// Submits a feedback payload to the bug-report pipeline. Abstracted so the
-/// widget tests can inject a fake that records the payload without a network.
-abstract class FeedbackSubmitter {
-  Future<bool> submit(Map<String, Object?> payload);
-}
-
-/// Production submitter: POSTs JSON to [feedbackEndpoint] via the existing
-/// `http` dependency.
-class HttpFeedbackSubmitter implements FeedbackSubmitter {
-  const HttpFeedbackSubmitter({this.endpoint = feedbackEndpoint, this.client});
-
-  final String endpoint;
-  final http.Client? client;
-
-  @override
-  Future<bool> submit(Map<String, Object?> payload) async {
-    final c = client ?? http.Client();
-    try {
-      final res = await c.post(
-        Uri.parse(endpoint),
-        headers: {
-          'Content-Type': 'application/json',
-          if (feedbackKey.isNotEmpty) 'X-MobiSSH-Key': feedbackKey,
-        },
-        body: jsonEncode(payload),
-      );
-      return res.statusCode >= 200 && res.statusCode < 300;
-    } catch (err) {
-      debugPrint('[feedback] submit failed: $err');
-      return false;
-    } finally {
-      if (client == null) c.close();
-    }
-  }
-}
-
 /// #1259: the offline fallback for a report that could not be sent — hands the
 /// assembled (already scrubbed) payload JSON to the share sheet.
 typedef FeedbackShareHandler = Future<void> Function(String payloadJson);
@@ -364,7 +328,7 @@ class FeedbackOverlay extends StatefulWidget {
     required this.child,
     required this.navigatorKey,
     required this.messengerKey,
-    this.submitter = const HttpFeedbackSubmitter(),
+    this.outbox,
     this.versionResolver = resolveBuildVersion,
     this.screenshotCapturer = _defaultScreenshotCapturer,
     this.settingsSnapshotter = settingsSnapshot,
@@ -387,7 +351,9 @@ class FeedbackOverlay extends StatefulWidget {
   /// messenger either (same above-the-Navigator reason).
   final GlobalKey<ScaffoldMessengerState> messengerKey;
 
-  final FeedbackSubmitter submitter;
+  /// #1259: every report is written here before it is sent, so a failed
+  /// send is kept and retried automatically. Null = [FeedbackOutbox.instance].
+  final FeedbackOutbox? outbox;
   final VersionResolver versionResolver;
   final ScreenshotCapturer screenshotCapturer;
 
@@ -645,6 +611,8 @@ class _FeedbackOverlayState extends State<FeedbackOverlay> {
     // include/exclude choices; Cancel/dismiss sends nothing. #1259: Send runs
     // FROM the sheet, so a failure keeps the note + capture on screen with
     // Retry / Share instead. It pops true only once the report was sent.
+    final outbox = widget.outbox ?? FeedbackOutbox.instance;
+    String? outboxId;
     final sent = await showModalBottomSheet<bool>(
       context: sheetContext,
       isScrollControlled: true,
@@ -662,9 +630,22 @@ class _FeedbackOverlayState extends State<FeedbackOverlay> {
         termReplyTrace: termReplyTrace,
         grid: grid,
         detectionGeom: detectionGeom,
-        onSend: (review) => widget.submitter.submit(payloadFor(review)),
-        onShareInstead: (review) =>
-            widget.shareInstead(jsonEncode(payloadFor(review))),
+        onSend: (review) async {
+          // Retry re-writes the SAME outbox entry, so the report is queued
+          // once however many times the user retries.
+          final res = await outbox.submit(
+            jsonEncode(payloadFor(review)),
+            id: outboxId,
+          );
+          outboxId = res.id ?? outboxId;
+          return res;
+        },
+        onShareInstead: (review) async {
+          await widget.shareInstead(jsonEncode(payloadFor(review)));
+          // Taken off the device by hand — don't also auto-send it later.
+          final id = outboxId;
+          if (id != null) await outbox.discard(id);
+        },
       ),
     );
     if (sent != true) return;
@@ -794,8 +775,8 @@ class _FeedbackReviewSheet extends StatefulWidget {
     required this.onShareInstead,
   });
 
-  /// Submits the report; true = delivered (#1259).
-  final Future<bool> Function(_FeedbackReview review) onSend;
+  /// Saves the report to the outbox and sends it once (#1259).
+  final Future<OutboxSubmitResult> Function(_FeedbackReview review) onSend;
 
   /// Offline fallback after a failed Send (#1259).
   final Future<void> Function(_FeedbackReview review) onShareInstead;
@@ -830,6 +811,12 @@ class _FeedbackReviewSheetState extends State<_FeedbackReviewSheet> {
   bool _sending = false;
   String? _sendError;
 
+  /// The report is in the outbox and will send on its own later.
+  bool _saved = false;
+
+  /// The relay refused this build (401/403): retrying cannot help.
+  bool _rejected = false;
+
   _FeedbackReview get _review => _FeedbackReview(
     comment: _controller.text,
     includeImages: _includeImages,
@@ -841,16 +828,30 @@ class _FeedbackReviewSheetState extends State<_FeedbackReviewSheet> {
       _sending = true;
       _sendError = null;
     });
-    final ok = await widget.onSend(_review);
+    final res = await widget.onSend(_review);
     if (!mounted) return;
-    if (ok) {
+    if (res.outcome == FeedbackPostOutcome.delivered) {
       Navigator.of(context).pop(true);
       return;
     }
+    final saved = res.id != null;
+    final rejected = res.outcome == FeedbackPostOutcome.rejected;
+    final dropped = res.evicted > 0
+        ? ' The outbox was full, so the oldest saved report was dropped.'
+        : '';
     setState(() {
       _sending = false;
-      _sendError = 'Couldn’t send the report. Your note and capture are '
-          'kept — retry, or share it as a file instead.';
+      _saved = saved && !rejected;
+      _rejected = rejected;
+      _sendError = rejected
+          ? 'The server refused this report (this build is not authorized '
+                'to upload). Share it as a file instead.'
+          : saved
+          ? 'Couldn’t send now. Saved — it will send automatically when '
+                'you’re back online. You can also retry or share it as a '
+                'file.$dropped'
+          : 'Couldn’t send the report, and it could not be saved. Your note '
+                'and capture are kept here — retry, or share it as a file.';
     });
   }
 
@@ -1003,7 +1004,8 @@ class _FeedbackReviewSheetState extends State<_FeedbackReviewSheet> {
                   child: OutlinedButton(
                     key: const Key('feedback-cancel-button'),
                     onPressed: () => Navigator.of(context).pop(),
-                    child: const Text('Cancel'),
+                    // Once saved, closing keeps it queued; it is not a cancel.
+                    child: Text(_saved ? 'Close' : 'Cancel'),
                   ),
                 ),
                 const SizedBox(width: 12),
@@ -1056,11 +1058,12 @@ class _FeedbackReviewSheetState extends State<_FeedbackReviewSheet> {
                 onPressed: _sending ? null : _shareInstead,
                 child: const Text('Share instead'),
               ),
-              TextButton(
-                key: const Key('feedback-retry-button'),
-                onPressed: _sending ? null : _send,
-                child: const Text('Retry'),
-              ),
+              if (!_rejected)
+                TextButton(
+                  key: const Key('feedback-retry-button'),
+                  onPressed: _sending ? null : _send,
+                  child: const Text('Retry'),
+                ),
             ],
           ),
         ],

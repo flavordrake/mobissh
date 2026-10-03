@@ -1,22 +1,24 @@
-// On-device bug-report send: failure keeps the report, Retry delivers it
-// (#1259 gap 2).
+// On-device bug-report send: a report filed while the relay is unreachable is
+// SAVED, and sent exactly once when the relay is back (#1259 gap 2 + outbox).
 //
-// The in-app feedback overlay is the one channel meant for reporting problems,
-// and a failed Send used to throw the note and capture away behind a 2s toast.
-// This drives the REAL overlay on the device — real screenshot rasterization,
-// real package_info / settings reads, real HTTP through HttpFeedbackSubmitter —
-// against two endpoints:
+// This drives the REAL overlay on the device (real screenshot rasterization,
+// real package_info and settings reads) through a REAL file-backed
+// FeedbackOutbox in the app's private documents dir, POSTing with the
+// production `postFeedbackBody` over real sockets:
 //
-//   1. a loopback port with nothing listening (connection refused)
-//      → the sheet stays up, the note is intact, the inline error shows Retry
-//   2. an in-process HTTP relay on the device's loopback
-//      → Retry delivers the SAME note + screenshot, the sheet closes
+//   1. relay unreachable (a loopback port with nothing listening) → Send →
+//      the sheet stays up with the note intact and says it was SAVED;
+//      Retry and Share instead are offered; the outbox holds 1 report
+//   2. the user just closes the sheet (does nothing else)
+//   3. the relay comes back; a NEW outbox instance on the same dir (what a
+//      relaunch's launch trigger runs: no in-memory state survives) flushes →
+//      the relay receives the report with the note and screenshot
+//   4. a second trigger sends nothing: delivered exactly once
 //
-// The relay is a stand-in for server/index.js's /api/bug-report: reaching the
-// real relay from the fleet emulator needs a third adb-reverse bridge, which
-// this test deliberately does not add. What the stand-in proves is the app
-// side — the real HTTP client path, the payload on the wire, the UI states.
-// The server's own ingest is covered by test/infra.
+// The relay is an in-process HTTP server on the device's loopback, a stand-in
+// for server/index.js's /api/bug-report. Reaching the real relay from the
+// fleet emulator would need a third adb-reverse bridge, which this test does
+// not add. The server's own ingest is covered by test/infra.
 //
 // The overlay is pumped in a minimal MaterialApp (mounted via `builder`, the
 // production wiring) rather than through MobisshApp, which constructs the
@@ -28,39 +30,31 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
+import 'package:path_provider/path_provider.dart';
 
+import 'package:mobissh/diagnostics/feedback_outbox.dart';
 import 'package:mobissh/ui/feedback_overlay.dart';
 
-class _SwitchableSubmitter implements FeedbackSubmitter {
-  _SwitchableSubmitter(this.endpoint);
-  String endpoint;
-  int calls = 0;
-
-  @override
-  Future<bool> submit(Map<String, Object?> payload) {
-    calls++;
-    return HttpFeedbackSubmitter(endpoint: endpoint).submit(payload);
-  }
-}
-
-/// Pump until [finder] matches or ~[slices]×[step] passes.
+/// Pump until [done] holds or ~[slices]×[step] passes.
 Future<bool> _pumpUntil(
   WidgetTester tester,
-  Finder finder, {
+  bool Function() done, {
   int slices = 40,
   Duration step = const Duration(milliseconds: 250),
 }) async {
   for (var i = 0; i < slices; i++) {
     await tester.pump(step);
-    if (finder.evaluate().isNotEmpty) return true;
+    if (done()) return true;
   }
   return false;
 }
 
+bool _present(Finder f) => f.evaluate().isNotEmpty;
+
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
-  testWidgets('failed Send keeps the note; Retry delivers it (#1259)', (
+  testWidgets('offline report is saved, then sent exactly once (#1259)', (
     tester,
   ) async {
     // A port that was free a moment ago: connecting to it is refused.
@@ -81,9 +75,19 @@ void main() {
     });
     addTearDown(() => relay.close(force: true));
 
-    final submitter = _SwitchableSubmitter(
-      'http://127.0.0.1:$deadPort/api/bug-report',
+    final docs = await getApplicationDocumentsDirectory();
+    final outboxDir = Directory('${docs.path}/feedback-outbox-test-1259');
+    if (await outboxDir.exists()) await outboxDir.delete(recursive: true);
+    addTearDown(() async {
+      if (await outboxDir.exists()) await outboxDir.delete(recursive: true);
+    });
+
+    var endpoint = 'http://127.0.0.1:$deadPort/api/bug-report';
+    FeedbackOutbox newOutbox() => FeedbackOutbox(
+      dir: () async => outboxDir,
+      poster: (body) => postFeedbackBody(body, endpoint: endpoint),
     );
+
     final navigatorKey = GlobalKey<NavigatorState>();
     final messengerKey = GlobalKey<ScaffoldMessengerState>();
     await tester.pumpWidget(
@@ -93,7 +97,7 @@ void main() {
         builder: (context, child) => FeedbackOverlay(
           navigatorKey: navigatorKey,
           messengerKey: messengerKey,
-          submitter: submitter,
+          outbox: newOutbox(),
           child: child ?? const SizedBox.shrink(),
         ),
         home: const Scaffold(
@@ -105,12 +109,15 @@ void main() {
 
     await tester.tap(find.byKey(const Key('feedback-affordance')));
     expect(
-      await _pumpUntil(tester, find.byKey(const Key('feedback-comment-field'))),
+      await _pumpUntil(
+        tester,
+        () => _present(find.byKey(const Key('feedback-comment-field'))),
+      ),
       isTrue,
       reason: 'the review sheet did not open',
     );
 
-    const note = 'device note that must survive a failed send #1259';
+    const note = 'device note filed offline, must arrive once #1259';
     await tester.enterText(
       find.byKey(const Key('feedback-comment-field')),
       note,
@@ -125,17 +132,22 @@ void main() {
     await tester.pump();
     await tester.tap(send);
 
-    // 1. Unreachable relay → persistent inline error, note intact.
+    // 1. Unreachable relay → saved, persistent inline message, note intact.
     expect(
-      await _pumpUntil(tester, find.byKey(const Key('feedback-send-error'))),
+      await _pumpUntil(
+        tester,
+        () => _present(find.byKey(const Key('feedback-send-error'))),
+      ),
       isTrue,
-      reason: 'a refused connection must surface the inline send error',
+      reason: 'a refused connection must surface the inline message',
     );
-    expect(submitter.calls, 1);
     expect(received, isEmpty);
-    // It stays — this is guidance the user acts on, not a toast.
     await tester.pump(const Duration(seconds: 4));
     expect(find.byKey(const Key('feedback-send-error')), findsOneWidget);
+    expect(
+      find.textContaining('Saved — it will send automatically'),
+      findsOneWidget,
+    );
     expect(
       tester
           .widget<TextField>(find.byKey(const Key('feedback-comment-field')))
@@ -148,22 +160,22 @@ void main() {
       find.byKey(const Key('feedback-share-instead-button')),
       findsOneWidget,
     );
+    expect((await newOutbox().status()).pending, 1);
 
-    // 2. Relay reachable → Retry sends the same report and the sheet closes.
-    submitter.endpoint = 'http://127.0.0.1:${relay.port}/api/bug-report';
-    final retry = find.byKey(const Key('feedback-retry-button'));
-    await tester.ensureVisible(retry);
+    // 2. The user does nothing more: Close.
+    final close = find.byKey(const Key('feedback-cancel-button'));
+    await tester.ensureVisible(close);
     await tester.pump();
-    await tester.tap(retry);
+    await tester.tap(close);
+    await tester.pump(const Duration(seconds: 1));
+    expect(find.byKey(const Key('feedback-comment-field')), findsNothing);
 
-    var landed = false;
-    for (var i = 0; i < 40 && !landed; i++) {
-      await tester.pump(const Duration(milliseconds: 250));
-      landed = received.isNotEmpty &&
-          find.byKey(const Key('feedback-comment-field')).evaluate().isEmpty;
-    }
-    expect(landed, isTrue, reason: 'Retry did not deliver and close the sheet');
-    expect(submitter.calls, 2);
+    // 3. Relay back; a fresh outbox (relaunch) runs the launch trigger.
+    endpoint = 'http://127.0.0.1:${relay.port}/api/bug-report';
+    final flushed = await newOutbox().flush();
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(flushed.sent, 1);
+    expect(received.length, 1);
     expect(received.single['comment'], note);
     expect(received.single['source'], 'native-in-app');
     expect(
@@ -171,8 +183,14 @@ void main() {
         'data:image/png;base64,',
       ),
       isTrue,
-      reason: 'the capture taken before the failure is what Retry sends',
+      reason: 'the capture taken at filing time is what gets delivered',
     );
-    expect(find.byKey(const Key('feedback-send-error')), findsNothing);
+
+    // 4. Another trigger (connect / resume) finds nothing: exactly once.
+    final again = await newOutbox().flush();
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(again.sent, 0);
+    expect(received.length, 1);
+    expect((await newOutbox().status()).total, 0);
   });
 }
