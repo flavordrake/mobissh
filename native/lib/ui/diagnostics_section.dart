@@ -14,6 +14,7 @@ import '../diagnostics/crash_reporter.dart';
 import '../diagnostics/feedback_bundle.dart';
 import '../diagnostics/frame_stats.dart' show frameStatsSnapshot;
 import '../diagnostics/gesture_trace.dart';
+import '../diagnostics/settings_snapshot.dart';
 import '../storage/detection_exceptions_store.dart';
 import 'connection_audit.dart';
 import 'settings_subheader.dart';
@@ -29,7 +30,17 @@ class DiagnosticsSection extends StatefulWidget {
   /// blob. When null, production shares a temp `.json` file via share_plus.
   final Future<void> Function(String bundle)? onShareFeedback;
 
-  const DiagnosticsSection({super.key, this.onShare, this.onShareFeedback});
+  /// #1257: whether the experimental developer tools (Force upload, Connection
+  /// audit) render. Settings passes the "Show experimental settings" flag;
+  /// standalone uses (tests) keep them.
+  final bool experimental;
+
+  const DiagnosticsSection({
+    super.key,
+    this.onShare,
+    this.onShareFeedback,
+    this.experimental = true,
+  });
 
   @override
   State<DiagnosticsSection> createState() => _DiagnosticsSectionState();
@@ -114,6 +125,7 @@ class _DiagnosticsSectionState extends State<DiagnosticsSection> {
         // only route off the device when the network is down, so it carries the
         // same section the upload does.
         frameStats: frameStatsSnapshot(),
+        settings: await settingsSnapshot(),
         crashJson: crashJson,
       );
 
@@ -226,6 +238,7 @@ class _DiagnosticsSectionState extends State<DiagnosticsSection> {
                       'No crash report on disk.',
                       style: TextStyle(fontStyle: FontStyle.italic),
                     ),
+                  if (widget.experimental) ...[
                   const SizedBox(height: 8),
                   OutlinedButton.icon(
                     key: const ValueKey('force-upload-button'),
@@ -246,6 +259,7 @@ class _DiagnosticsSectionState extends State<DiagnosticsSection> {
                     icon: const Icon(Icons.show_chart),
                     label: const Text('Connection Audit'),
                   ),
+                  ],
                 ],
               ),
             ),

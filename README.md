@@ -8,7 +8,7 @@ Android is the primary platform; Linux and macOS desktop builds exist.
 
 ### Terminal that understands its output
 
-- **Link, path and command detection.** URLs, absolute and relative file paths, and shell command lines in the output get a soft colour wash under the text (the glyphs stay full contrast) and a chip in the gutter at the screen edge. Settings → Detection turns each type on or off.
+- **Link, path and command detection.** URLs, absolute and relative file paths, and shell command lines in the output get a soft colour wash under the text (the glyphs stay full contrast) and a chip in the gutter at the screen edge. Settings → Links & paths turns detection on or off; the Detection lab turns each type on or off and lists the text you marked "Not a …".
 - **Tap to act.** Tap a URL to copy it. Tap a path or `file://` link to open the file browser at that folder. Tap a command's gutter chip to copy the whole command. Long-press (with mouse mode on) or tap a chip for the full menu: Open, Copy, the `sftp://` form, and "Not a URL / Not a file" to stop detecting that exact text.
 - **Verified paths.** A detected path turns a bolder shade once the app has checked over SFTP that it exists on the host. Short and relative paths stay hidden until they verify, so stray words don't light up.
 - **Detection Lab.** Pick colours and intensity per pattern with live previews, edit the command lexicon, and add your own regex patterns with a sample line and a live compile check (Settings → Detection lab).
@@ -24,7 +24,7 @@ Android is the primary platform; Linux and macOS desktop builds exist.
 - **Compose bar.** A floating text box where swipe typing, voice dictation and autocorrect work. Send a line or a multi-line paste, and recall earlier entries per session.
 - **Multiple sessions.** Swipe the session bar to switch. Sessions survive the app going to the background (an Android foreground service keeps them alive) and reconnect on resume if they dropped.
 - **Notifications.** A terminal bell, OSC 9 or OSC 777 from a background session raises a notification; tapping it opens that session and, for tmux, the window that rang. [INTEGRATION.md](INTEGRATION.md) shows how to make Claude Code, Codex, Gemini CLI or OpenCode ring when they need you.
-- **tmux control mode (experimental).** An opt-in setting attaches with `tmux -CC` and switches windows with real tmux commands. Off by default; scrollback does not render in this mode yet.
+- **tmux control mode (experimental).** An opt-in setting (Settings → Advanced → Show experimental settings) attaches with `tmux -CC` and switches windows with real tmux commands. Off by default; scrollback does not render in this mode yet.
 
 ### SFTP client with round-trip editing
 

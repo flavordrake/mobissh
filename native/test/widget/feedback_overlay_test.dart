@@ -55,6 +55,9 @@ Widget _harness({
       submitter: submitter,
       versionResolver: () async => '[1.0.0+9 deadbee]',
       screenshotCapturer: capturer ?? _fakeCapturer,
+      // #1257: a fixed snapshot; the production reader is a platform-backed
+      // SharedPreferences future that the test clock does not drain.
+      settingsSnapshotter: () async => const {'mobissh.ui.fontSize': 15.0},
       child: child ?? const SizedBox.shrink(),
     ),
     home: const Scaffold(body: Center(child: Text('SOME SCREEN CONTENT'))),
@@ -133,6 +136,8 @@ void main() {
       isTrue,
     );
     expect(submitter.lastPayload!['version'], '[1.0.0+9 deadbee]');
+    // #1257: the settings snapshot rides in the submitted payload.
+    expect(submitter.lastPayload!['settings'], {'mobissh.ui.fontSize': 15.0});
   });
 
   testWidgets(

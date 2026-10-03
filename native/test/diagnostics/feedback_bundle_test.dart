@@ -234,6 +234,21 @@ void main() {
       );
     });
 
+    test('carries the settings snapshot when supplied, omits it when not '
+        '(#1257)', () {
+      final withSettings = jsonDecode(assembleFeedbackBundle(
+        info: info,
+        connectLog: const [],
+        settings: const {'mobissh.ui.fontSize': 15.0},
+      )) as Map<String, Object?>;
+      expect(withSettings['settings'], {'mobissh.ui.fontSize': 15.0});
+      final without = jsonDecode(assembleFeedbackBundle(
+        info: info,
+        connectLog: const [],
+      )) as Map<String, Object?>;
+      expect(without.containsKey('settings'), isFalse);
+    });
+
     test('detection exceptions default empty + recent list is capped (#995)', () {
       final none = assembleFeedbackBundle(
         info: info,

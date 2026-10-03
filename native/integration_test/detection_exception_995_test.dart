@@ -223,6 +223,17 @@ void main() {
       }
       await tester.tap(find.byKey(const Key('home-nav-settings')));
       await tester.pump(const Duration(milliseconds: 800));
+      // #1257: the exceptions list moved into the Detection lab.
+      final labTile = find.byKey(const ValueKey('detection-lab-tile'));
+      await tester.ensureVisible(labTile);
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.tap(labTile);
+      await tester.pump(const Duration(milliseconds: 800));
+      final exceptionsTile = find.byKey(const ValueKey('lab-exceptions-tile'));
+      await tester.ensureVisible(exceptionsTile);
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.tap(exceptionsTile);
+      await tester.pump(const Duration(milliseconds: 800));
       final removeButton = find.byKey(
         const ValueKey('detection-exception-remove-0'),
       );
@@ -243,6 +254,11 @@ void main() {
         isEmpty,
         reason: 'Settings remove did not clear the exception',
       );
+      // Back out of the exceptions list and the lab to the home tabs.
+      await tester.pageBack();
+      await tester.pump(const Duration(milliseconds: 800));
+      await tester.pageBack();
+      await tester.pump(const Duration(milliseconds: 800));
       await tester.tap(find.byKey(const Key('home-nav-profiles')));
       await tester.pump(const Duration(milliseconds: 800));
 

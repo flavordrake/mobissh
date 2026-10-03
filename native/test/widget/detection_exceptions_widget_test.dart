@@ -8,8 +8,9 @@
 //   - the gutter registry's per-match list actions gain a LAST 'not' action per
 //     anchor class ('Not a URL' for url payloads, 'Not a file' for path and
 //     file:// payloads — the file:// report carries the ORIGINAL matched text)
-//   - the Settings page lists persisted exceptions (text + host) with a
-//     per-entry remove that restores detection
+//   - the Detection lab's "Exceptions (N)" row (#1257: moved off the Settings
+//     main page) lists persisted exceptions (text + host) with a per-entry
+//     remove that restores detection
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -20,7 +21,7 @@ import 'package:mobissh/state/detection_exceptions_providers.dart';
 import 'package:mobissh/storage/detection_exceptions_store.dart';
 import 'package:mobissh/ui/ghostty_gutter_layer.dart';
 import 'package:mobissh/ui/path_action_overlay.dart';
-import 'package:mobissh/ui/settings_screen.dart';
+import 'package:mobissh/ui/detection_lab_screen.dart';
 import 'package:mobissh/ui/url_action_overlay.dart';
 
 Future<void> _pumpFrames(WidgetTester tester, {int count = 10}) async {
@@ -247,7 +248,7 @@ void main() {
     });
   });
 
-  group('Settings: Detection exceptions', () {
+  group('Detection lab: Exceptions', () {
     Future<ProviderContainer> pumpSettings(WidgetTester tester) async {
       tester.view.physicalSize = const Size(1000, 4000);
       tester.view.devicePixelRatio = 1.0;
@@ -259,9 +260,12 @@ void main() {
       await tester.pumpWidget(
         UncontrolledProviderScope(
           container: container,
-          child: const MaterialApp(home: Scaffold(body: SettingsScreen())),
+          child: const MaterialApp(home: DetectionLabScreen()),
         ),
       );
+      await _pumpFrames(tester);
+      // #1257: the list lives one tap into the lab.
+      await tester.tap(find.byKey(const ValueKey('lab-exceptions-tile')));
       await _pumpFrames(tester);
       return container;
     }
