@@ -42,6 +42,9 @@ test-history/coverage/**/*.info
 # lsmcp cache
 .lsmcp/cache
 
+# fleet buildbox job results (scripts/flutter-cmd.sh offload); per-run, local only
+.fleet-build-result.*/
+
 # process coredumps (can contain in-memory secrets — never commit)
 core
 core.*

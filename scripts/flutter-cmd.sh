@@ -25,6 +25,15 @@ if [ "${1:-}" = "--in" ]; then
   cd "$WORKDIR"
 fi
 
+# Fleet build offload (homelab buildbox, proven on this repo 2026-10-03):
+# analyze, headless test and `build apk` run on buildbox so heavy builds stop
+# starving fd-dev; release APKs come back unsigned and are signed + verified
+# LOCALLY (the keystore never leaves fd-dev). Device/integration tests and
+# everything else stay local. FLEET_BUILD_REMOTE=1 forces local (fallback only).
+if [[ -d /home/dev/build-runner ]]; then
+  source /home/dev/build-runner/flutter-route.sh
+fi
+
 # Every APK/test build writes ~100M+ (2026-09-13: / hit 100% mid-gate). This is
 # the one choke point all builds pass through, so the disk preflight lives here.
 case "${1:-}" in
