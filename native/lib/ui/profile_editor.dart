@@ -31,6 +31,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../diagnostics/connect_trace.dart';
 import '../ssh/jump_host.dart';
 import '../ssh/ssh_config_jump_import.dart';
+import '../services/clipboard.dart';
 import '../ssh/ssh_config_parser.dart';
 import '../state/keys_providers.dart';
 import '../state/profiles_providers.dart';
@@ -38,6 +39,7 @@ import '../state/ui_prefs_providers.dart';
 import '../storage/keys_store.dart';
 import '../storage/profiles_store.dart';
 import 'color_picker_sheet.dart';
+import 'keys_screen.dart';
 import 'link_browser_picker.dart';
 import 'reenter_key_dialog.dart';
 import 'revealable_field.dart';
@@ -559,6 +561,9 @@ class _ProfileEditorState extends ConsumerState<ProfileEditor>
   @override
   Widget build(BuildContext context) {
     final isKey = _authKind == _AuthKind.key;
+    // Keep the library loaded while on Password too, so switching to Key can
+    // preselect from it at once (#1259).
+    ref.watch(savedKeysProvider);
     // Keyboard height. We size and float the action bar against this ourselves
     // (resizeToAvoidBottomInset:false below) so the buttons stay directly above
     // the soft keyboard and remain hit-testable — the #585 session-menu pattern
@@ -786,7 +791,10 @@ class _ProfileEditorState extends ConsumerState<ProfileEditor>
                   ),
                 ],
                 selected: {_authKind},
-                onSelectionChanged: (s) => setState(() => _authKind = s.first),
+                onSelectionChanged: (s) => setState(() {
+                  _authKind = s.first;
+                  _preselectNewestLibraryKey();
+                }),
               ),
               const SizedBox(height: 8),
               if (!isKey)
@@ -1069,6 +1077,7 @@ class _ProfileEditorState extends ConsumerState<ProfileEditor>
   /// stored-key note (reuse) or the PEM + passphrase paste fields.
   List<Widget> _buildKeyAuthFields(BuildContext context) {
     final keyOptions = _keySourceOptions();
+    final publicKey = _selectedPublicKey();
     return [
       if (keyOptions.isNotEmpty) ...[
         InputDecorator(
@@ -1111,6 +1120,17 @@ class _ProfileEditorState extends ConsumerState<ProfileEditor>
         ),
         const SizedBox(height: 8),
       ],
+      // #1259: add a validated library key in place — no detour through
+      // Settings → SSH keys and back.
+      Align(
+        alignment: Alignment.centerLeft,
+        child: TextButton.icon(
+          key: const Key('profile-editor-key-add'),
+          onPressed: _addLibraryKey,
+          icon: const Icon(Icons.add),
+          label: const Text('Add key to library'),
+        ),
+      ),
       if (_pendingIdentityFile != null)
         Padding(
           padding: const EdgeInsets.only(bottom: 8),
@@ -1133,12 +1153,31 @@ class _ProfileEditorState extends ConsumerState<ProfileEditor>
           // migration banner lands the user in this editor, and without this
           // the stored-key note was a dead end — restoring required knowing
           // to back out to Settings → SSH keys.
-          trailing: TextButton(
-            key: const Key('profile-editor-stored-key-reenter'),
-            onPressed: () => _reenterStoredKey(
-              _storedKeyLabel(keyOptions, _selectedStoredKeyVaultId),
-            ),
-            child: const Text('Re-enter'),
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // #1259: the public line for the server's authorized_keys,
+              // without a trip to the Keys screen. Non-secret by definition.
+              if (publicKey != null && publicKey.isNotEmpty)
+                IconButton(
+                  key: const Key('profile-editor-stored-key-copy'),
+                  icon: const Icon(Icons.copy, size: 18),
+                  tooltip: 'Copy public key',
+                  onPressed: () async {
+                    await copyToClipboard(publicKey);
+                    if (mounted) {
+                      showTopToast(this.context, 'Public key copied');
+                    }
+                  },
+                ),
+              TextButton(
+                key: const Key('profile-editor-stored-key-reenter'),
+                onPressed: () => _reenterStoredKey(
+                  _storedKeyLabel(keyOptions, _selectedStoredKeyVaultId),
+                ),
+                child: const Text('Re-enter'),
+              ),
+            ],
           ),
         )
       else ...[
@@ -1172,8 +1211,10 @@ class _ProfileEditorState extends ConsumerState<ProfileEditor>
   List<_KeyOption> _keySourceOptions() {
     final out = <_KeyOption>[];
     final seen = <String>{};
+    // valueOrNull keeps the previous list during a refresh, so a selection
+    // made from it (#1259 preselect) is never missing from the items.
     final libraryKeys =
-        ref.watch(savedKeysProvider).asData?.value ?? const <SavedKey>[];
+        ref.watch(savedKeysProvider).valueOrNull ?? const <SavedKey>[];
     for (final k in libraryKeys) {
       if (seen.add(k.vaultId)) {
         out.add(_KeyOption(vaultId: k.vaultId, label: 'Library: ${k.name}'));
@@ -1194,6 +1235,49 @@ class _ProfileEditorState extends ConsumerState<ProfileEditor>
       out.add(_KeyOption(vaultId: own, label: "This profile's stored key"));
     }
     return out;
+  }
+
+  /// Switching to key auth with nothing chosen yet picks the newest library
+  /// key (#1259) instead of a blank paste box — the common case right after
+  /// adding one. "Paste a new key…" stays one dropdown pick away.
+  void _preselectNewestLibraryKey() {
+    if (_authKind != _AuthKind.key ||
+        _keySource == _KeySource.stored ||
+        _keySourceTouched ||
+        _keyCtrl.text.isNotEmpty) {
+      return;
+    }
+    final lib = ref.read(savedKeysProvider).valueOrNull ?? const <SavedKey>[];
+    if (lib.isEmpty) return;
+    final newest = lib.reduce((a, b) => b.createdAtMs > a.createdAtMs ? b : a);
+    _keySource = _KeySource.stored;
+    _selectedStoredKeyVaultId = newest.vaultId;
+  }
+
+  /// Add a key to the library without leaving the editor (#1259): the shared
+  /// validating Add dialog, then attach the new key to this profile.
+  Future<void> _addLibraryKey() async {
+    final key = await showAddKeyDialog(context);
+    if (key == null || !mounted) return;
+    // The dropdown's items come from savedKeysProvider; wait for the reload
+    // so the new value is among them (a missing value is a build assertion).
+    await ref.read(savedKeysProvider.future);
+    if (!mounted) return;
+    setState(() {
+      _keySourceTouched = true;
+      _keySource = _KeySource.stored;
+      _selectedStoredKeyVaultId = key.vaultId;
+    });
+  }
+
+  /// The selected key's OpenSSH public line, when the library knows it — what
+  /// the user pastes into the server's authorized_keys.
+  String? _selectedPublicKey() {
+    final lib = ref.watch(savedKeysProvider).valueOrNull ?? const <SavedKey>[];
+    for (final k in lib) {
+      if (k.vaultId == _selectedStoredKeyVaultId) return k.publicKey;
+    }
+    return null;
   }
 
   /// Restore the selected stored key's private material in place (#1121):
