@@ -6,6 +6,11 @@ verify". Each bullet: ONE short line, what changed — NOT how to test it. Keep
 internal/test/CI/refactor work OUT. **Update this every release** (gen-apk-install-page.sh
 warns when native/lib has commits newer than this file).
 
+## v0.1.13-dev+200 (2026-10-03): safer key setup, bug reports that survive offline, clearer restores
+- **Bug reports filed offline are kept and sent later.** If Send fails, the report stays on the phone and goes out automatically on the next launch, connect or app resume, never twice. Settings → Advanced → Diagnostics shows "N bug reports waiting to send" with Send now and Discard. (#1259) **Device-test:** file a report in airplane mode, then reconnect.
+- **Invalid SSH keys are refused when you add them.** A bad key or wrong passphrase shows the reason and nothing is stored. Adding a key from the profile editor and connecting takes 5 taps instead of about 11; Key login preselects your newest key. (#1259) **Device-test:** add a key from the profile editor and connect.
+- **Restoring a backup tells you what it skipped.** A partial import lists every skipped entry and why, instead of silently dropping it. (#1259) **Device-test:** restore a backup.
+
 ## v0.1.13-dev+199 (2026-10-03): Iosevka, tidier settings, one-tap updates
 - **Iosevka is a terminal font option.** Pick it in the session menu or as the default in Settings. Profiles and backups now also keep Roboto Mono, Ubuntu Mono and Cousine instead of resetting them. (#1256) **Device-test:** switch a live session to Iosevka.
 - **Settings are reorganised into five sections.** The per-kind link switches and the exceptions list live in the Detection Lab, and rarely used items hide behind "Show experimental settings" at the bottom of Advanced. Hidden settings keep their values. (#1257) **Device-test:** walk the new Settings page.
