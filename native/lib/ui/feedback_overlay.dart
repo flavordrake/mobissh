@@ -19,6 +19,7 @@
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
@@ -26,6 +27,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:http/http.dart' as http;
 import 'package:package_info_plus/package_info_plus.dart';
+import 'package:share_plus/share_plus.dart';
 
 import 'package:mobissh/diagnostics/connect_trace.dart';
 import 'package:mobissh/diagnostics/detection_geom.dart'
@@ -265,6 +267,29 @@ class HttpFeedbackSubmitter implements FeedbackSubmitter {
   }
 }
 
+/// #1259: the offline fallback for a report that could not be sent — hands the
+/// assembled (already scrubbed) payload JSON to the share sheet.
+typedef FeedbackShareHandler = Future<void> Function(String payloadJson);
+
+/// Production share: writes the payload to a temp `.json` file and opens the
+/// share sheet, the same route as Settings → Share feedback (offline backup).
+Future<void> shareFeedbackPayload(String payloadJson) async {
+  final stamp = DateTime.now().toUtc().toIso8601String().replaceAll(
+    RegExp(r'[:.]'),
+    '-',
+  );
+  final file = File(
+    '${Directory.systemTemp.path}${Platform.pathSeparator}'
+    'mobissh-feedback-$stamp.json',
+  );
+  await file.writeAsString(payloadJson);
+  await Share.shareXFiles(
+    [XFile(file.path, mimeType: 'application/json')],
+    subject: 'MobiSSH feedback',
+    text: 'MobiSSH bug report that could not be sent.',
+  );
+}
+
 /// Resolves the baked build version, formatted as `[<build> <hash>]`.
 typedef VersionResolver = Future<String> Function();
 
@@ -343,6 +368,7 @@ class FeedbackOverlay extends StatefulWidget {
     this.versionResolver = resolveBuildVersion,
     this.screenshotCapturer = _defaultScreenshotCapturer,
     this.settingsSnapshotter = settingsSnapshot,
+    this.shareInstead = shareFeedbackPayload,
   });
 
   final Widget child;
@@ -367,6 +393,9 @@ class FeedbackOverlay extends StatefulWidget {
 
   /// #1257: reads the allowlisted settings snapshot; injectable for tests.
   final Future<Map<String, Object?>> Function() settingsSnapshotter;
+
+  /// #1259: "Share instead" after a failed Send; injectable for tests.
+  final FeedbackShareHandler shareInstead;
 
   @override
   State<FeedbackOverlay> createState() => _FeedbackOverlayState();
@@ -590,11 +619,33 @@ class _FeedbackOverlayState extends State<FeedbackOverlay> {
     final sheetContext = widget.navigatorKey.currentState?.overlay?.context;
     if (sheetContext == null) return;
 
-    // #967: the Review & Send sheet returns the note PLUS the user's
-    // include/exclude choices (null if cancelled — nothing is sent). The user
-    // previews the screenshot / motion frames and can drop the images and/or
-    // the diagnostic traces before anything leaves the device.
-    final review = await showModalBottomSheet<_FeedbackReview>(
+    Map<String, Object?> payloadFor(_FeedbackReview review) =>
+        buildFeedbackPayload(
+          comment: review.comment,
+          version: version,
+          screenshotDataUrl: dataUrl,
+          frameDataUrls: frameDataUrls,
+          connectLog: connectLog,
+          gestureLog: gestureLog,
+          lifecycleLog: lifecycleLog,
+          controlModeTrace: controlModeTrace,
+          byteTrace: byteTrace,
+          scrollTrace: scrollTrace,
+          sentSgrTrace: sentSgrTrace,
+          termReplyTrace: termReplyTrace,
+          grid: grid,
+          detectionGeom: detectionGeom,
+          frameStats: frameStats,
+          settings: settings,
+          includeImages: review.includeImages,
+          includeTraces: review.includeTraces,
+        );
+
+    // #967: the Review & Send sheet carries the note PLUS the user's
+    // include/exclude choices; Cancel/dismiss sends nothing. #1259: Send runs
+    // FROM the sheet, so a failure keeps the note + capture on screen with
+    // Retry / Share instead. It pops true only once the report was sent.
+    final sent = await showModalBottomSheet<bool>(
       context: sheetContext,
       isScrollControlled: true,
       builder: (sheetCtx) => _FeedbackReviewSheet(
@@ -611,41 +662,19 @@ class _FeedbackOverlayState extends State<FeedbackOverlay> {
         termReplyTrace: termReplyTrace,
         grid: grid,
         detectionGeom: detectionGeom,
+        onSend: (review) => widget.submitter.submit(payloadFor(review)),
+        onShareInstead: (review) =>
+            widget.shareInstead(jsonEncode(payloadFor(review))),
       ),
     );
-    if (review == null) return; // cancelled / dismissed — nothing sent
-
-    final payload = buildFeedbackPayload(
-      comment: review.comment,
-      version: version,
-      screenshotDataUrl: dataUrl,
-      frameDataUrls: frameDataUrls,
-      connectLog: connectLog,
-      gestureLog: gestureLog,
-      lifecycleLog: lifecycleLog,
-      controlModeTrace: controlModeTrace,
-      byteTrace: byteTrace,
-      scrollTrace: scrollTrace,
-      sentSgrTrace: sentSgrTrace,
-      termReplyTrace: termReplyTrace,
-      grid: grid,
-      detectionGeom: detectionGeom,
-      frameStats: frameStats,
-      settings: settings,
-      includeImages: review.includeImages,
-      includeTraces: review.includeTraces,
-    );
-    final ok = await widget.submitter.submit(payload);
-    // Confirmation as a TOP toast (#667) so it doesn't occlude the bottom
-    // controls. This overlay sits ABOVE the Navigator (MaterialApp.builder, the
+    if (sent != true) return;
+    // Success confirmation as a TOP toast (#667) — informational, so a toast
+    // fits. This overlay sits ABOVE the Navigator (MaterialApp.builder, the
     // #664 fix) and has no ScaffoldMessenger / ambient Overlay in its own
     // context, so we hand showTopToast the navigator's OverlayState directly.
     final overlay = widget.navigatorKey.currentState?.overlay;
     if (overlay != null) {
-      showTopToastInOverlay(
-        overlay,
-        ok ? 'Feedback sent — thanks!' : 'Send failed — try again.',
-      );
+      showTopToastInOverlay(overlay, 'Feedback sent — thanks!');
     }
   }
 
@@ -761,7 +790,15 @@ class _FeedbackReviewSheet extends StatefulWidget {
     required this.termReplyTrace,
     required this.grid,
     required this.detectionGeom,
+    required this.onSend,
+    required this.onShareInstead,
   });
+
+  /// Submits the report; true = delivered (#1259).
+  final Future<bool> Function(_FeedbackReview review) onSend;
+
+  /// Offline fallback after a failed Send (#1259).
+  final Future<void> Function(_FeedbackReview review) onShareInstead;
 
   final String version;
   final String? screenshotDataUrl;
@@ -787,6 +824,50 @@ class _FeedbackReviewSheetState extends State<_FeedbackReviewSheet> {
   bool _includeTraces = true;
   int _frame = 0;
   Timer? _playTimer;
+
+  // #1259: Send state. A failure keeps everything on screen and shows a
+  // persistent inline error (never a toast — the user must act on it).
+  bool _sending = false;
+  String? _sendError;
+
+  _FeedbackReview get _review => _FeedbackReview(
+    comment: _controller.text,
+    includeImages: _includeImages,
+    includeTraces: _includeTraces,
+  );
+
+  Future<void> _send() async {
+    setState(() {
+      _sending = true;
+      _sendError = null;
+    });
+    final ok = await widget.onSend(_review);
+    if (!mounted) return;
+    if (ok) {
+      Navigator.of(context).pop(true);
+      return;
+    }
+    setState(() {
+      _sending = false;
+      _sendError = 'Couldn’t send the report. Your note and capture are '
+          'kept — retry, or share it as a file instead.';
+    });
+  }
+
+  Future<void> _shareInstead() async {
+    setState(() => _sending = true);
+    try {
+      await widget.onShareInstead(_review);
+      if (!mounted) return;
+      Navigator.of(context).pop(false);
+    } catch (err) {
+      if (!mounted) return;
+      setState(() {
+        _sending = false;
+        _sendError = 'Share failed: $err';
+      });
+    }
+  }
 
   /// The images the user can review: the motion-frame burst if present, else the
   /// single screenshot as a one-element list. Empty when nothing was captured.
@@ -914,6 +995,7 @@ class _FeedbackReviewSheetState extends State<_FeedbackReviewSheet> {
                 color: theme.colorScheme.onSurfaceVariant,
               ),
             ),
+            if (_sendError != null) _buildSendError(theme),
             const SizedBox(height: 12),
             Row(
               children: [
@@ -928,21 +1010,60 @@ class _FeedbackReviewSheetState extends State<_FeedbackReviewSheet> {
                 Expanded(
                   child: FilledButton.icon(
                     key: const Key('feedback-submit-button'),
-                    onPressed: () => Navigator.of(context).pop(
-                      _FeedbackReview(
-                        comment: _controller.text,
-                        includeImages: _includeImages,
-                        includeTraces: _includeTraces,
-                      ),
-                    ),
-                    icon: const Icon(Icons.send),
-                    label: const Text('Send'),
+                    onPressed: _sending ? null : _send,
+                    icon: _sending
+                        ? const SizedBox.square(
+                            dimension: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.send),
+                    label: Text(_sending ? 'Sending…' : 'Send'),
                   ),
                 ),
               ],
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildSendError(ThemeData theme) {
+    final scheme = theme.colorScheme;
+    return Container(
+      key: const Key('feedback-send-error'),
+      margin: const EdgeInsets.only(top: 12),
+      padding: const EdgeInsets.fromLTRB(12, 8, 8, 4),
+      decoration: BoxDecoration(
+        color: scheme.errorContainer,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            _sendError!,
+            style: theme.textTheme.bodyMedium?.copyWith(
+              color: scheme.onErrorContainer,
+            ),
+          ),
+          Wrap(
+            alignment: WrapAlignment.end,
+            spacing: 8,
+            children: [
+              TextButton(
+                key: const Key('feedback-share-instead-button'),
+                onPressed: _sending ? null : _shareInstead,
+                child: const Text('Share instead'),
+              ),
+              TextButton(
+                key: const Key('feedback-retry-button'),
+                onPressed: _sending ? null : _send,
+                child: const Text('Retry'),
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }
