@@ -111,6 +111,8 @@ void main() {
     await pumpSettings(tester);
     await settleSettings(tester);
 
+    // #1257: the row now sits in the last section, below the fold.
+    await tester.ensureVisible(find.byKey(const ValueKey('app-version-tile')));
     await tester.tap(find.byKey(const ValueKey('app-version-tile')));
     // Settle the async copyToClipboard + read-back + toast.
     for (var i = 0; i < 10; i++) {

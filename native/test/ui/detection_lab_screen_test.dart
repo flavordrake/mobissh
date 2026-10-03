@@ -72,7 +72,40 @@ void main() {
         expect(find.byKey(ValueKey('lab-preview-$key')), findsOneWidget,
             reason: 'mini live preview for $key');
       }
-      expect(find.byKey(const ValueKey('lab-master-toggle')), findsOneWidget);
+      // #1257: the lab's third copy of the master switch is gone; Settings
+      // and the session menu keep it.
+      expect(find.byKey(const ValueKey('lab-master-toggle')), findsNothing);
+      // #1257: the exceptions list moved here as one row.
+      expect(find.byKey(const ValueKey('lab-exceptions-tile')), findsOneWidget);
+      expect(find.text('Exceptions (0)'), findsOneWidget);
+    });
+
+    testWidgets('#1257: master OFF shows a note pointing back to Settings',
+        (tester) async {
+      final container = await _pumpLab(tester);
+      expect(find.byKey(const ValueKey('lab-master-off-note')), findsNothing);
+      await container
+          .read(detectionSettingsProvider.notifier)
+          .setEnabled(false);
+      await _pumpFrames(tester);
+      expect(find.byKey(const ValueKey('lab-master-off-note')), findsOneWidget);
+    });
+
+    testWidgets('#1257: per-type switches (moved from Settings) bind the same '
+        'provider for all four types', (tester) async {
+      final container = await _pumpLab(tester);
+      final before = container.read(detectionSettingsProvider);
+      for (final key in const ['url', 'path', 'relpath', 'command']) {
+        final sw = find.byKey(ValueKey('lab-enable-$key'));
+        await tester.ensureVisible(sw);
+        await tester.tap(sw);
+        await _pumpFrames(tester);
+      }
+      final after = container.read(detectionSettingsProvider);
+      expect(after.url, !before.url);
+      expect(after.path, !before.path);
+      expect(after.relpath, !before.relpath);
+      expect(after.command, !before.command);
     });
 
     testWidgets('enable switches bind the EXISTING detection providers',

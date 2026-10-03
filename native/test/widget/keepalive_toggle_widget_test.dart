@@ -59,6 +59,8 @@ void main() {
   testWidgets('tapping toggle persists the new value', (tester) async {
     await pumpSettings(tester);
 
+    // #1257: Background is the fourth section, below the fold.
+    await tester.ensureVisible(find.byKey(const ValueKey('keepalive-toggle')));
     await tester.tap(find.byKey(const ValueKey('keepalive-toggle')));
     // Settle the StateNotifier emission and SharedPreferences write.
     for (var i = 0; i < 10; i++) {

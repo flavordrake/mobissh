@@ -39,6 +39,7 @@ import 'package:mobissh/diagnostics/paint_stats.dart'
     show activePaintStatsSnapshot;
 import 'package:mobissh/diagnostics/gesture_trace.dart';
 import 'package:mobissh/diagnostics/session_byte_recorder.dart';
+import 'package:mobissh/diagnostics/settings_snapshot.dart';
 import 'package:mobissh/ui/top_toast.dart';
 
 /// Formats the baked build identifiers into the `[<build> <hash>]` shape the
@@ -85,6 +86,8 @@ Map<String, Object?> buildFeedbackPayload({
   Map<String, Object?>? grid,
   Map<String, Object?>? detectionGeom,
   Map<String, Object?>? frameStats,
+  // #1257: allowlisted non-secret settings (see settings_snapshot.dart).
+  Map<String, Object?>? settings,
   // #967: the pre-send Review & Send sheet lets the user EXCLUDE categories.
   // These gate ASSEMBLY (not just display) so an excluded artifact is provably
   // absent from the uploaded body. Default true → report quality preserved; the
@@ -212,6 +215,10 @@ Map<String, Object?> buildFeedbackPayload({
     // reader whether the "dead bottom 45%" is a real viewport collapse or the
     // keyboard inset the capture cannot draw. Pure numbers — nothing to scrub.
     if (includeTraces && frameStats != null) 'frameStats': frameStats,
+    // #1257: non-secret UI prefs + feature flags, so a settings cleanup can
+    // rest on usage data. Diagnostic, so it follows the traces choice.
+    if (includeTraces && settings != null && settings.isNotEmpty)
+      'settings': settings,
   };
 }
 
@@ -335,6 +342,7 @@ class FeedbackOverlay extends StatefulWidget {
     this.submitter = const HttpFeedbackSubmitter(),
     this.versionResolver = resolveBuildVersion,
     this.screenshotCapturer = _defaultScreenshotCapturer,
+    this.settingsSnapshotter = settingsSnapshot,
   });
 
   final Widget child;
@@ -356,6 +364,9 @@ class FeedbackOverlay extends StatefulWidget {
   final FeedbackSubmitter submitter;
   final VersionResolver versionResolver;
   final ScreenshotCapturer screenshotCapturer;
+
+  /// #1257: reads the allowlisted settings snapshot; injectable for tests.
+  final Future<Map<String, Object?>> Function() settingsSnapshotter;
 
   @override
   State<FeedbackOverlay> createState() => _FeedbackOverlayState();
@@ -460,6 +471,7 @@ class _FeedbackOverlayState extends State<FeedbackOverlay> {
       // #1135: the burst just recorded a MOVING repro — the frame stats over
       // that burst are exactly the measurement it lacks.
       frameStats: frameStatsSnapshot(),
+      settings: await widget.settingsSnapshotter(),
     );
   }
 
@@ -532,6 +544,7 @@ class _FeedbackOverlayState extends State<FeedbackOverlay> {
 
     final dataUrl = pngBytesToDataUrl(bytes);
     final version = await widget.versionResolver();
+    final settings = await widget.settingsSnapshotter();
     if (!mounted) return;
 
     await _showCommentSheet(
@@ -548,6 +561,7 @@ class _FeedbackOverlayState extends State<FeedbackOverlay> {
       grid: grid,
       detectionGeom: detectionGeom,
       frameStats: frameStats,
+      settings: settings,
     );
   }
 
@@ -566,6 +580,7 @@ class _FeedbackOverlayState extends State<FeedbackOverlay> {
     Map<String, Object?>? grid,
     Map<String, Object?>? detectionGeom,
     Map<String, Object?>? frameStats,
+    Map<String, Object?>? settings,
   }) async {
     // Show the sheet from the Navigator's OVERLAY context — NOT this overlay's
     // own context, which sits above the Navigator (mounted via
@@ -616,6 +631,7 @@ class _FeedbackOverlayState extends State<FeedbackOverlay> {
       grid: grid,
       detectionGeom: detectionGeom,
       frameStats: frameStats,
+      settings: settings,
       includeImages: review.includeImages,
       includeTraces: review.includeTraces,
     );

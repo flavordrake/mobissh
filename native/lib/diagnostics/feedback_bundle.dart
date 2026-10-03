@@ -80,6 +80,8 @@ String assembleFeedbackBundle({
   List<String> controlModeTrace = const <String>[],
   List<String> detectionExceptions = const <String>[],
   Map<String, Object?>? frameStats,
+  // #1257: allowlisted non-secret settings (settings_snapshot.dart).
+  Map<String, Object?>? settings,
   String? crashJson,
 }) {
   final scrubbedLog = connectLog.map(scrubSecrets).toList(growable: false);
@@ -151,6 +153,7 @@ String assembleFeedbackBundle({
     // of them was inference. Numbers only (durations, pixel sizes, counts), so
     // there is nothing here to scrub. Omitted entirely when absent.
     'frameStats': ?frameStats,
+    'settings': ?settings,
     'lastCrash': lastCrash,
     // Null-aware element: the entry is omitted entirely when there is no raw
     // (non-JSON) crash blob to preserve.

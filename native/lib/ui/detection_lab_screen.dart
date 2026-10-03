@@ -2,20 +2,27 @@
 // Settings Detection row (and a session-menu detection-glyph long-press, IA
 // review change 7).
 //
-// Zone order per the reviewed IA: global (master + accent note) → one CARD per
+// Zone order per the reviewed IA: global (accent note) → one CARD per
 // built-in pattern (enable switch bound to the SAME detectionSettingsProvider
 // bit Settings flips, plus a MINI live preview rendered by the real painter/
 // chip code) → the lab-wide reset at the BOTTOM (review change 4: destructive
 // control out of the thumb-prime zone, matching the Settings Reset
 // convention). Tapping a card opens its detail page.
+//
+// #1257: the per-type switches live ONLY here now (Settings dropped its
+// copies), the exceptions list moved in as one "Exceptions (N)" row, and the
+// lab's own copy of the master switch is gone (Settings + session menu keep
+// it); a note explains greyed switches when the master is off.
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../state/custom_patterns_providers.dart';
+import '../state/detection_exceptions_providers.dart';
 import '../state/detection_providers.dart';
 import '../state/detection_style_providers.dart';
 import '../storage/custom_patterns_store.dart';
+import 'detection_exceptions_screen.dart';
 import 'detection_lab_detail_screen.dart';
 import 'detection_lab_pattern_editor.dart';
 import 'detection_lab_preview.dart';
@@ -42,6 +49,7 @@ class DetectionLabScreen extends ConsumerWidget {
     final detection = ref.watch(detectionSettingsProvider);
     final styles = ref.watch(detectionStylesProvider);
     final customPatterns = ref.watch(customPatternsProvider);
+    final exceptionCount = ref.watch(detectionExceptionsProvider).length;
     final preview = detectionLabPreviewTheme(ref);
     // The SAME resolver the runtime layers consult — the mini previews recolor
     // live as the store changes (slice-1 wiring).
@@ -58,20 +66,18 @@ class DetectionLabScreen extends ConsumerWidget {
           key: const ValueKey('detection-lab-list'),
           padding: const EdgeInsets.symmetric(vertical: 8),
           children: [
-            // Zone A: global. Master switch — one provider bit, three
-            // surfaces (Settings toggle / session-menu glyph / here).
-            SwitchListTile(
-              key: const ValueKey('lab-master-toggle'),
-              secondary: const Icon(Icons.search_outlined),
-              title: const Text('Detect links & paths'),
-              subtitle: const Text(
-                'Master switch — the same setting as in Settings and the '
-                'session menu.',
+            // Zone A: global. The master switch lives in Settings and the
+            // session menu (#1257); say why the switches below are greyed.
+            if (!detection.enabled)
+              const ListTile(
+                key: ValueKey('lab-master-off-note'),
+                leading: Icon(Icons.search_off_outlined),
+                title: Text('Detection is off'),
+                subtitle: Text(
+                  'Turn on "Make links and paths tappable" in Settings or the '
+                  'session menu to use these patterns.',
+                ),
               ),
-              value: detection.enabled,
-              onChanged: (v) =>
-                  ref.read(detectionSettingsProvider.notifier).setEnabled(v),
-            ),
             ListTile(
               key: const ValueKey('lab-accent-note'),
               leading: const Icon(Icons.palette_outlined),
@@ -111,6 +117,22 @@ class DetectionLabScreen extends ConsumerWidget {
                 ),
                 icon: const Icon(Icons.add),
                 label: const Text('Add pattern'),
+              ),
+            ),
+            // #1257: the saved "Not a …" reports, one row instead of an
+            // unbounded list on the Settings page.
+            ListTile(
+              key: const ValueKey('lab-exceptions-tile'),
+              leading: const Icon(Icons.playlist_remove_outlined),
+              title: Text('Exceptions ($exceptionCount)'),
+              subtitle: const Text(
+                'Text you marked "Not a URL / file / command".',
+              ),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => const DetectionExceptionsScreen(),
+                ),
               ),
             ),
             const SizedBox(height: 24),

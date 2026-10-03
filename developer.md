@@ -23,8 +23,8 @@ Building, testing and operating MobiSSH, and the diagnostic and distribution fea
 | Telemetry rings (connect, lifecycle, gesture, control-mode, paint and frame stats, scroll and SGR traces) | yes, collected in memory, sent only inside a bug report | none |
 | Raw terminal byte traces | no | `MOBISSH_RAW_DIAGNOSTICS=true` (`native/lib/diagnostics/diagnostics_config.dart`) |
 | Crash reports, uploaded on next launch or connect | yes, automatic | endpoint hard-coded to the tailnet host (`native/lib/diagnostics/crash_reporter.dart`); currently rejected for lack of the key (#1243) |
-| Settings → Advanced (share feedback offline, last crash, force crash upload, connection audit) | yes, collapsed | none |
-| Self-update (banner and Settings → Updates) | sideloaded APK only | `MOBISSH_BUILD` must be set; the Play bundle swaps in `android/app/src/play/AndroidManifest.xml`, which drops the installer permission and provider |
+| Settings → Advanced (share feedback offline, last crash; force crash upload, connection audit and tmux control mode behind "Show experimental settings", stored in `mobissh.ui.featureFlags`) | yes, collapsed | none |
+| Self-update (banner and Settings → About & updates) | sideloaded APK only | `MOBISSH_BUILD` must be set; the Play bundle swaps in `android/app/src/play/AndroidManifest.xml`, which drops the installer permission and provider |
 | tmux control mode | yes, opt-in setting, off by default | `kControlModeScrollRenders = false` keeps its scrollback off |
 | Body text selection | no | `kBodyTextSelectionEnabled = false`; the gutter is the copy path |
 | xterm.dart terminal backend | no (code kept as a fallback, not selectable) | |
