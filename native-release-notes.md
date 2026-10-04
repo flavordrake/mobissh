@@ -6,6 +6,12 @@ verify". Each bullet: ONE short line, what changed — NOT how to test it. Keep
 internal/test/CI/refactor work OUT. **Update this every release** (gen-apk-install-page.sh
 warns when native/lib has commits newer than this file).
 
+## v0.1.13-dev+201 (2026-10-04): privacy and security fixes
+- **Bug reports no longer include your hosts or usernames.** The settings snapshot carried the file browser's per-host sort order; it is gone, and a test now checks the values sent, not just their names.
+- **Saved bug reports stay on this phone.** Reports waiting to send are kept out of cloud backup and device-to-device transfer, and are deleted after 30 days if they never go out.
+- **Discard really discards.** Discarding or sharing a report while it is uploading no longer lets it be sent later.
+- **What's new no longer loads images** from the update notes; it shows their text instead.
+
 ## v0.1.13-dev+200 (2026-10-03): safer key setup, bug reports that survive offline, clearer restores
 - **Bug reports filed offline are kept and sent later.** If Send fails, the report stays on the phone and goes out automatically on the next launch, connect or app resume, never twice. Settings → Advanced → Diagnostics shows "N bug reports waiting to send" with Send now and Discard. (#1259) **Device-test:** file a report in airplane mode, then reconnect.
 - **Invalid SSH keys are refused when you add them.** A bad key or wrong passphrase shows the reason and nothing is stored. Adding a key from the profile editor and connecting takes 5 taps instead of about 11; Key login preselects your newest key. (#1259) **Device-test:** add a key from the profile editor and connect.
