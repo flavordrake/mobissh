@@ -243,7 +243,13 @@ class _WhatsNewSheet extends StatelessWidget {
               ),
               const SizedBox(height: 8),
               // The top section of native-release-notes.md (markdown).
-              MarkdownBody(data: notes),
+              // #1271: notes are manifest-supplied — never fetch or read an
+              // image they name (the default builder does Image.network /
+              // Image.file); show the alt text instead.
+              MarkdownBody(
+                data: notes,
+                imageBuilder: (uri, title, alt) => Text(alt ?? ''),
+              ),
             ],
           ),
         ),

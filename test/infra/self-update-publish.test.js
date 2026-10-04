@@ -276,6 +276,61 @@ describe('A1 native-release-apk.sh (R1, R2, R4)', () => {
   });
 });
 
+// #1271 (0.1.13 security review, finding 2): build outputs can come back from a
+// remote builder with symlinks intact. `[[ -f ]]` and `cp` follow them, so a
+// symlinked "APK" would publish whatever it points at (key.properties, the
+// keystore, feedback.env) on the tailnet. The release script must refuse.
+describe('#1271 native-release-apk.sh refuses symlinked build outputs', () => {
+  function plantStub(root, apkName) {
+    fs.writeFileSync(path.join(root, 'scripts/flutter-cmd.sh'), [
+      '#!/usr/bin/env bash',
+      'ROOT="$(cd "$(dirname "$0")/.." && pwd)"',
+      'OUT="$ROOT/native/build/app/outputs/flutter-apk"',
+      'mkdir -p "$OUT"',
+      'printf "arm64 apk 1271" > "$OUT/app-arm64-v8a-release.apk"',
+      `rm -f "$OUT/${apkName}"`,
+      `ln -s "$ROOT/secret.properties" "$OUT/${apkName}"`,
+      '',
+    ].join('\n'));
+    fs.chmodSync(path.join(root, 'scripts/flutter-cmd.sh'), 0o755);
+  }
+
+  function published(root) {
+    const out = [];
+    for (const dir of ['public', 'dist']) {
+      const d = path.join(root, dir);
+      if (!fs.existsSync(d)) continue;
+      for (const n of fs.readdirSync(d)) {
+        const p = path.join(d, n);
+        if (fs.statSync(p).isFile()) out.push(fs.readFileSync(p, 'utf8'));
+      }
+    }
+    return out;
+  }
+
+  for (const apk of [
+    'app-arm64-v8a-release.apk',
+    'app-armeabi-v7a-release.apk',
+    'app-x86_64-release.apk',
+  ]) {
+    it(`a symlinked ${apk} is refused and its target is never published`, () => {
+      const root = makeSandbox();
+      fs.writeFileSync(path.join(root, 'secret.properties'), 'storePassword=SECRET-1271\n');
+      plantStub(root, apk);
+      const key = path.join(root, 'key.properties');
+      fs.writeFileSync(key, 'storeFile=x\n');
+      const r = runRelease(root, key);
+      assert.equal(r.status, 2, r.stdout + r.stderr);
+      assert.match(r.stdout + r.stderr, /symlink|regular file/i);
+      for (const body of published(root)) {
+        assert.ok(!body.includes('SECRET-1271'), 'the symlink target was published');
+      }
+      assert.ok(!fs.existsSync(path.join(root, 'dist', 'android-latest.json')),
+        'no manifest may name a refused build');
+    });
+  }
+});
+
 describe('A2 server serves android-latest.json (R3)', () => {
   let port = 0;
   let server;

@@ -94,8 +94,24 @@ class MainActivity : FlutterActivity() {
         installClipboardChannel(flutterEngine)
         installDownloadsChannel(flutterEngine)
         installBrowserChannel(flutterEngine)
+        installPathsChannel(flutterEngine)
         // #1216: self-update verify (R10) + installer hand-off (R11).
         UpdatesChannel(this).install(flutterEngine)
+    }
+
+    // #1271: path_provider has no getNoBackupFilesDir(). The bug-report outbox
+    // (screenshots, terminal traces) lives there so Auto Backup and
+    // device-to-device transfer never copy it.
+    private fun installPathsChannel(flutterEngine: FlutterEngine) {
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "mobissh/paths",
+        ).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "noBackupDir" -> result.success(noBackupFilesDir.absolutePath)
+                else -> result.notImplemented()
+            }
+        }
     }
 
     private fun installBrowserChannel(flutterEngine: FlutterEngine) {

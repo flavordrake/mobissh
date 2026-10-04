@@ -192,5 +192,13 @@ void main() {
     expect(again.sent, 0);
     expect(received.length, 1);
     expect((await newOutbox().status()).total, 0);
+
+    // 5. #1271: the PRODUCTION outbox resolves (through the real
+    //    `mobissh/paths` channel) under getNoBackupFilesDir(), which Auto
+    //    Backup and device transfer never copy — not under app_flutter/.
+    final prod = await FeedbackOutbox.resolveDefaultDir();
+    expect(prod, isNotNull, reason: 'the no-backup dir must resolve on device');
+    expect(prod!.path, endsWith('/no_backup/feedback-outbox'));
+    expect(prod.path, isNot(contains('app_flutter')));
   });
 }
