@@ -103,6 +103,17 @@ else
   err "  this build will be REJECTED once prod enforces upload auth (#1115)."
 fi
 
+# #1277: the release must resolve exactly the hashes pinned in pubspec.lock.
+# `--enforce-lockfile` refuses a lockfile that pubspec.yaml no longer matches and
+# any package whose sha256 differs from the lock. `pub get` is not routed to the
+# buildbox, so this checks the committed lock here; the buildbox's implicit pub
+# get inside `build apk` cannot take the flag (homelab runner change, #1277).
+log "verifying Dart dependencies against pubspec.lock (--enforce-lockfile)"
+if ! "${REPO_ROOT}/scripts/flutter-cmd.sh" --in "$NATIVE_DIR" pub get --enforce-lockfile; then
+  err "flutter pub get --enforce-lockfile failed: pubspec.lock is stale or a package hash does not match"
+  exit 2
+fi
+
 log "building native release APK (this can take a few minutes)..."
 if ! "${REPO_ROOT}/scripts/flutter-cmd.sh" --in "$NATIVE_DIR" build apk --release --split-per-abi ${DEFINES[@]+"${DEFINES[@]}"}; then
   err "flutter build apk --release --split-per-abi failed"
