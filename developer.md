@@ -78,7 +78,7 @@ Uploads require the `X-MobiSSH-Key` header and are rate limited (`server/feedbac
 
 The server's stored fields are an allowlist in `saveBugReport` (`server/feedback-store.js`); a field the app sends but that is not named there is dropped. `FEEDBACK_RETENTION_DAYS` (default 0, keep everything) turns on the sweep in `server-feedback/index.js`.
 
-On the device, every bug report goes through the outbox (`native/lib/diagnostics/feedback_outbox.dart`): it is written to `<app documents>/feedback-outbox/` before the POST. One file per report, the suffix is the state:
+On the device, every bug report goes through the outbox (`native/lib/diagnostics/feedback_outbox.dart`): it is written to the outbox before the POST: on Android `getNoBackupFilesDir()/feedback-outbox` (via the `mobissh/paths` channel; excluded from cloud backup and device transfer, old `app_flutter/feedback-outbox` contents migrated once), elsewhere `<app documents>/feedback-outbox/`. Reports older than 30 days are expired. One file per report, the suffix is the state:
 
 - `.tmp`: an atomic write in progress, renamed to `.json` when complete;
 - `.json`: pending, sent by the next flush;

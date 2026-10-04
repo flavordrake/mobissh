@@ -69,10 +69,8 @@ your sessions. The Play Store build does not include this.
   the battery-optimization prompt was shown, tmux control mode, the link
   detection settings (which types are on, intensity, gutter side and mode, and
   the package name of the browser you chose for links), whether experimental
-  settings are shown, and the file browser's sort order. **The sort order is
-  stored per profile under a `host:port:username` label, so it includes the
-  host, port and username of each profile whose file sort you changed.** No
-  passwords, keys or passphrases are included, and no other profile details;
+  settings are shown. No hostnames, ports, usernames, passwords, keys or
+  passphrases are included, and no other profile details;
 - your **device model, OS version, and the app version**.
 
 **Because those traces and the screenshot capture what was on your screen, they
@@ -87,12 +85,15 @@ password-, token-, and key-looking strings from the text logs — but this is
 
 **Reports waiting to send are stored on your device.** When you tap **Send**,
 the report (including its screenshot, frames, terminal traces and logs) is first
-written to the app's private storage, then uploaded. If the upload fails, for
-example because you are offline, the report stays there and the app sends it
+written to the app's private storage, then uploaded. On Android that storage is
+excluded from cloud backup and device-to-device transfer. If the upload fails,
+for example because you are offline, the report stays there and the app sends it
 automatically on a later launch, connection or return to the app. Limits and
 clean-up:
 - at most **10 reports or 50 MB**; when a new report would exceed that, the
   oldest saved reports are deleted;
+- a saved report older than **30 days** is deleted without being sent, and the
+  app tells you;
 - a report is deleted from the device as soon as it is delivered;
 - a report the server refuses is kept, marked as refused, and never retried;
   one interrupted mid-upload is kept and never resent automatically;
