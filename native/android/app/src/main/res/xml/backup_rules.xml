@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- #1271 (API <= 30): see data_extraction_rules.xml. Exclude-only, so every
+     other file keeps the default Auto Backup behaviour. -->
+<full-backup-content>
+    <exclude domain="root" path="app_flutter/feedback-outbox/" />
+</full-backup-content>

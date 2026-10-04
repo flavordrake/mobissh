@@ -7,6 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mobissh/diagnostics/settings_snapshot.dart';
 import 'package:mobissh/state/detection_providers.dart';
 import 'package:mobissh/state/feature_flags_providers.dart';
+import 'package:mobissh/state/files_sort_providers.dart';
 import 'package:mobissh/state/keepalive_providers.dart';
 import 'package:mobissh/state/tmux_control_mode_setting.dart';
 import 'package:mobissh/state/ui_prefs_providers.dart';
@@ -55,6 +56,22 @@ void main() {
     final flat = snap.toString();
     for (final v in const ['10.0.0.5', 'root', 'hunter2', 'swordfish',
         'PRIVATE KEY', 'work']) {
+      expect(flat, isNot(contains(v)), reason: v);
+    }
+  });
+
+  // 0.1.13 security review: key NAMES can look innocent while the VALUE is
+  // keyed by identity — the file-sort pref stores one entry per
+  // `host:port:username`, so allowlisting it leaked every SFTP-browsed host +
+  // user into bug reports. Assert on values, with every real pref populated.
+  test('no allowlisted value carries a host or username (#1257 review)', () {
+    final snap = buildSettingsSnapshot(<String, Object?>{
+      fontSizePrefKey: 13.0,
+      filesSortPrefKey:
+          '{"version":1,"profiles":{"nv-dev.example:22:matt":{"key":"name","ascending":true}}}',
+    });
+    final flat = snap.toString();
+    for (final v in const ['nv-dev.example', 'matt', ':22:']) {
       expect(flat, isNot(contains(v)), reason: v);
     }
   });

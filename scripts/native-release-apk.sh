@@ -114,6 +114,21 @@ if [[ ! -f "$BUILT_APK" ]]; then
   exit 2
 fi
 
+# #1271: outputs can come back from a remote builder with symlinks intact, and
+# `[[ -f ]]` / `cp` follow them, so a symlinked "APK" would publish its target
+# (key.properties, the keystore, feedback.env) on the tailnet. Check every APK
+# BEFORE the first copy so a refused build publishes nothing at all.
+require_regular_apk() {
+  if [[ -L "$1" || ! -f "$1" ]]; then
+    err "refusing to publish ${1}: not a regular file (symlink?)"
+    exit 2
+  fi
+}
+require_regular_apk "$BUILT_APK"
+for apk in "$FALLBACK_V7A" "$FALLBACK_X64"; do
+  if [[ -e "$apk" || -L "$apk" ]]; then require_regular_apk "$apk"; fi
+done
+
 log "publishing to ${PUBLIC_DIR}/ as ${STAMPED} + ${STABLE}"
 cp "$BUILT_APK" "${PUBLIC_DIR}/${STAMPED}"
 cp "$BUILT_APK" "${PUBLIC_DIR}/${STABLE}"

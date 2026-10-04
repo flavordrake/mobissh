@@ -28,6 +28,7 @@ class _RecordingSubmitter implements FeedbackOutbox {
   FeedbackPostOutcome? failOutcome;
   int calls = 0;
   int evictOnNext = 0;
+  int expireOnNext = 0;
   final List<String?> submittedIds = <String?>[];
   final List<String> discarded = <String>[];
 
@@ -38,12 +39,15 @@ class _RecordingSubmitter implements FeedbackOutbox {
     lastPayload = jsonDecode(body) as Map<String, Object?>;
     final evicted = evictOnNext;
     evictOnNext = 0;
+    final expired = expireOnNext;
+    expireOnNext = 0;
     return OutboxSubmitResult(
       id: id ?? 'report-1',
       outcome: returnValue
           ? FeedbackPostOutcome.delivered
           : (failOutcome ?? FeedbackPostOutcome.failed),
       evicted: evicted,
+      expired: expired,
     );
   }
 
@@ -491,6 +495,22 @@ void main() {
     await sendNote(tester, 'outbox full');
     expect(
       find.textContaining('oldest saved report was dropped'),
+      findsOneWidget,
+    );
+  });
+
+  // #1271: saved reports expire after 30 days, and the user is told.
+  testWidgets('expired saved reports are reported like the cap eviction', (
+    tester,
+  ) async {
+    final submitter = _RecordingSubmitter()
+      ..returnValue = false
+      ..expireOnNext = 2;
+    await tester.pumpWidget(_harness(submitter: submitter));
+    await tester.pumpAndSettle();
+    await sendNote(tester, 'old ones expire');
+    expect(
+      find.textContaining('2 saved reports older than 30 days were deleted'),
       findsOneWidget,
     );
   });

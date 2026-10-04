@@ -16,7 +16,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../services/battery_optimization.dart' show batteryOptAskedPrefKey;
 import '../state/detection_providers.dart' show detectionSettingsPrefKey;
 import '../state/feature_flags_providers.dart' show featureFlagsPrefKey;
-import '../state/files_sort_providers.dart' show filesSortPrefKey;
 import '../state/keepalive_providers.dart' show keepaliveEnabledPrefKey;
 import '../state/terminal_backend.dart' show terminalBackendPrefKey;
 import '../state/tmux_control_mode_setting.dart' show tmuxControlModePrefKey;
@@ -38,7 +37,9 @@ const List<String> kSettingsSnapshotKeys = <String>[
   tmuxControlModePrefKey,
   detectionSettingsPrefKey,
   featureFlagsPrefKey,
-  filesSortPrefKey,
+  // NOT filesSortPrefKey: its value is keyed per profile by
+  // `host:port:username`, so it leaked identities into reports (0.1.13
+  // security review). Allowlist by VALUE content, not just the key name.
 ];
 
 /// Picks the allowlisted keys out of [stored]. A string value that decodes to
