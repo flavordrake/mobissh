@@ -836,9 +836,15 @@ class _FeedbackReviewSheetState extends State<_FeedbackReviewSheet> {
     }
     final saved = res.id != null;
     final rejected = res.outcome == FeedbackPostOutcome.rejected;
-    final dropped = res.evicted > 0
-        ? ' The outbox was full, so the oldest saved report was dropped.'
-        : '';
+    final dropped =
+        (res.evicted > 0
+            ? ' The outbox was full, so the oldest saved report was dropped.'
+            : '') +
+        (res.expired > 0
+            ? ' ${res.expired} saved report${res.expired == 1 ? '' : 's'}'
+                  ' older than 30 days ${res.expired == 1 ? 'was' : 'were'} '
+                  'deleted.'
+            : '');
     setState(() {
       _sending = false;
       _saved = saved && !rejected;

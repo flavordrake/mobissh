@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- #1271 (API 31+): defence in depth for the bug-report outbox, which now
+     lives in getNoBackupFilesDir() (never backed up). An older build kept it
+     in app_flutter/feedback-outbox; exclude that path from cloud backup and
+     device-to-device transfer. Exclude-only: everything else keeps the
+     default Auto Backup behaviour. Mirrors backup_rules.xml (API <= 30). -->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="root" path="app_flutter/feedback-outbox/" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="root" path="app_flutter/feedback-outbox/" />
+    </device-transfer>
+</data-extraction-rules>

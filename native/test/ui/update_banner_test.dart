@@ -318,6 +318,36 @@ void main() {
       expect(find.textContaining('Faster updates'), findsOneWidget);
     });
 
+    // #1271: the notes come from the manifest host. A markdown image must not
+    // make the app fetch a URL (Image.network) or render a local file
+    // (Image.file); it renders as its alt text.
+    testWidgets('images in the notes render as alt text, never loaded',
+        (tester) async {
+      var shown = false;
+      await tester.pumpWidget(app((context) {
+        if (shown) return;
+        shown = true;
+        showPostUpdateSnackBar(context,
+            version: '0.1.13+199',
+            notes: '- Faster updates\n\n'
+                '![beacon pic](https://attacker.example/beacon.png)\n\n'
+                '![local pic](/data/data/com.flavordrake.mobissh/x.png)');
+      }));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text("What's new"));
+      await tester.pumpAndSettle();
+      final sheet = find.byKey(const Key('whats-new-sheet'));
+      expect(sheet, findsOneWidget);
+      expect(
+        find.descendant(of: sheet, matching: find.byType(Image)),
+        findsNothing,
+        reason: 'no Image.network / Image.file for manifest-supplied notes',
+      );
+      expect(find.textContaining('beacon pic'), findsOneWidget);
+      expect(find.textContaining('local pic'), findsOneWidget);
+      expect(find.textContaining('attacker.example'), findsNothing);
+    });
+
     Widget launch(int running) => ProviderScope(
           overrides: [
             runningBuildProvider.overrideWithValue(running),

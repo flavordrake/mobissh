@@ -85,7 +85,8 @@ class _DiagnosticsSectionState extends State<DiagnosticsSection> {
           ? 'A send is already in progress.'
           : 'Sent ${r.sent}'
                 '${r.failed > 0 ? '; ${r.failed} still waiting (offline?)' : ''}'
-                '${r.rejected > 0 ? '; ${r.rejected} refused by the server' : ''}.';
+                '${r.rejected > 0 ? '; ${r.rejected} refused by the server' : ''}'
+                '${r.expired > 0 ? '; ${r.expired} older than 30 days deleted' : ''}.';
     });
     _refresh();
   }

@@ -20,8 +20,10 @@
 //   .tmp         an atomic write in progress (temp, then rename to .json)
 //
 // Privacy: reports carry screenshots and terminal traces. They live only in
-// the app's private documents dir and their contents are never logged — only
-// file names and counts are.
+// an app-private dir that is excluded from backup and device transfer
+// (Android no_backup, #1271), are deleted after 30 days, and their contents
+// are never logged — only file names and counts are. They are not encrypted
+// at rest: app-private + never backed up is the boundary.
 
 import 'dart:async';
 import 'dart:convert';
@@ -29,6 +31,7 @@ import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 
@@ -91,6 +94,7 @@ class OutboxSubmitResult {
     required this.id,
     required this.outcome,
     this.evicted = 0,
+    this.expired = 0,
   });
 
   /// The outbox entry, or null when the report could not be written to disk
@@ -100,6 +104,10 @@ class OutboxSubmitResult {
 
   /// How many OLDER saved reports were dropped to stay within the caps.
   final int evicted;
+
+  /// How many saved reports were dropped for being older than
+  /// [FeedbackOutbox.maxAge] (#1271).
+  final int expired;
 }
 
 /// Counts for the "N bug reports waiting to send" line.
@@ -125,12 +133,16 @@ class OutboxFlushResult {
     this.sent = 0,
     this.failed = 0,
     this.rejected = 0,
+    this.expired = 0,
     this.skipped = false,
   });
 
   final int sent;
   final int failed;
   final int rejected;
+
+  /// Saved reports deleted for being older than [FeedbackOutbox.maxAge].
+  final int expired;
 
   /// True when the flush did nothing: backoff window, or one already running.
   final bool skipped;
@@ -149,22 +161,80 @@ class FeedbackOutbox {
     required this.poster,
     this.maxReports = 10,
     this.maxBytes = 50 * 1024 * 1024,
+    this.maxAge = const Duration(days: 30),
     DateTime Function()? now,
   }) : _now = now ?? DateTime.now;
 
-  /// Production instance: `<app documents>/feedback-outbox`, POSTed to the
-  /// baked [feedbackEndpoint].
+  /// Production instance: [resolveDefaultDir], POSTed to the baked
+  /// [feedbackEndpoint].
   static final FeedbackOutbox instance = FeedbackOutbox(
     dir: _defaultDir,
     poster: postFeedbackBody,
   );
 
+  static const String _dirName = 'feedback-outbox';
+  static const MethodChannel _pathsChannel = MethodChannel('mobissh/paths');
+  static Future<Directory?>? _resolved;
+
   static Future<Directory?> _defaultDir() async {
+    final d = await (_resolved ??= resolveDefaultDir());
+    if (d == null) _resolved = null; // transient: try again next time
+    return d;
+  }
+
+  /// #1271: where the production outbox lives.
+  ///
+  /// Android: `<getNoBackupFilesDir()>/feedback-outbox`. The documents dir
+  /// (`app_flutter/`) is included in Auto Backup and device-to-device
+  /// transfer, and reports carry screenshots and terminal traces. Reports an
+  /// older build saved there are moved over (once). When the no-backup dir
+  /// cannot be resolved there is NO outbox (a send is still tried once) —
+  /// never a fallback to the backed-up dir.
+  ///
+  /// Other platforms: `<app documents>/feedback-outbox`, unchanged.
+  @visibleForTesting
+  static Future<Directory?> resolveDefaultDir({bool? android}) async {
+    Directory? legacy;
     try {
       final docs = await getApplicationDocumentsDirectory();
-      return Directory('${docs.path}${Platform.pathSeparator}feedback-outbox');
-    } catch (_) {
+      legacy = Directory('${docs.path}${Platform.pathSeparator}$_dirName');
+    } catch (_) {}
+    if (!(android ?? Platform.isAndroid)) return legacy;
+    final String? base;
+    try {
+      base = await _pathsChannel.invokeMethod<String>('noBackupDir');
+    } catch (err) {
+      _log('no-backup dir unavailable: ${err.runtimeType}');
       return null;
+    }
+    if (base == null || base.isEmpty) return null;
+    final target = Directory('$base${Platform.pathSeparator}$_dirName');
+    if (legacy != null) await _migrate(legacy, target);
+    return target;
+  }
+
+  /// Move every file from [from] into [to], then remove [from]. A file that
+  /// cannot be moved stays where it was (and keeps [from]); nothing is lost.
+  static Future<void> _migrate(Directory from, Directory to) async {
+    try {
+      if (!await from.exists()) return;
+      await to.create(recursive: true);
+      var moved = 0;
+      for (final f in (await from.list().toList()).whereType<File>()) {
+        final name = f.path.split(Platform.pathSeparator).last;
+        final dest = '${to.path}${Platform.pathSeparator}$name';
+        try {
+          await f.rename(dest);
+        } on FileSystemException {
+          await f.copy(dest); // rename fails across filesystems
+          await f.delete();
+        }
+        moved++;
+      }
+      await from.delete();
+      _log('moved $moved report(s) out of the backed-up dir');
+    } catch (err) {
+      _log('outbox migration incomplete: ${err.runtimeType}');
     }
   }
 
@@ -172,6 +242,9 @@ class FeedbackOutbox {
   final FeedbackPoster poster;
   final int maxReports;
   final int maxBytes;
+
+  /// Saved reports (any state) older than this are deleted (#1271).
+  final Duration maxAge;
   final DateTime Function() _now;
 
   static const Duration _baseBackoff = Duration(seconds: 30);
@@ -186,10 +259,15 @@ class FeedbackOutbox {
   /// was left by a dead process.
   final Set<String> _inFlight = <String>{};
 
+  /// #1271: ids the user discarded (Discard / Share instead). An upload of one
+  /// that is in flight deletes it when it settles instead of re-queueing it.
+  final Set<String> _discarded = <String>{};
+
   /// Write [body] to the outbox (atomically; replacing entry [id] when given)
   /// and send it once. Delivered → the file is deleted. Rejected → `.rejected`.
   /// Failed → it stays pending for the next flush.
   Future<OutboxSubmitResult> submit(String body, {String? id}) async {
+    if (id != null) _discarded.remove(id); // an explicit re-send wins
     Directory? d;
     try {
       d = await _ensureDir();
@@ -202,8 +280,10 @@ class FeedbackOutbox {
     }
     final entryId = id ?? _mintId();
     var evicted = 0;
+    var expired = 0;
     try {
       await _writeAtomic(d, entryId, body);
+      expired = await _expire(d, keep: entryId);
       evicted = await _enforceCaps(d, keep: entryId);
     } catch (err) {
       _log('write failed for $entryId: ${err.runtimeType}');
@@ -214,6 +294,7 @@ class FeedbackOutbox {
       id: entryId,
       outcome: outcome ?? FeedbackPostOutcome.failed,
       evicted: evicted,
+      expired: expired,
     );
   }
 
@@ -230,10 +311,12 @@ class FeedbackOutbox {
     var sent = 0;
     var failed = 0;
     var rejected = 0;
+    var expired = 0;
     try {
       final d = await dir();
       if (d == null || !await d.exists()) return const OutboxFlushResult();
       await _quarantineOrphans(d);
+      expired = await _expire(d);
       for (final entryId in await _idsWith(d, _pending)) {
         final outcome = await _sendEntry(d, entryId);
         switch (outcome) {
@@ -263,14 +346,30 @@ class FeedbackOutbox {
       _autoFailures = 0;
       _nextAutoAt = null;
     }
-    return OutboxFlushResult(sent: sent, failed: failed, rejected: rejected);
+    return OutboxFlushResult(
+      sent: sent,
+      failed: failed,
+      rejected: rejected,
+      expired: expired,
+    );
   }
 
-  /// Remove one entry in whatever state it is in.
+  /// Remove one entry in whatever state it is in. An upload of it in flight
+  /// deletes it when it settles (#1271) — it is never re-queued.
   Future<void> discard(String id) async {
+    _discarded.add(id);
     final d = await dir();
     if (d == null) return;
-    for (final suffix in const [_pending, _rejected, _unconfirmed, _corrupt]) {
+    for (final suffix in const [
+      _pending,
+      _rejected,
+      _unconfirmed,
+      _corrupt,
+      _tmp,
+      _sending,
+    ]) {
+      // The in-flight upload owns its .sending and deletes it on settling.
+      if (suffix == _sending && _inFlight.contains(id)) continue;
       final f = File(_path(d, id, suffix));
       try {
         if (await f.exists()) await f.delete();
@@ -280,10 +379,15 @@ class FeedbackOutbox {
 
   /// Remove every saved report (the "Discard" action).
   Future<void> discardAll() async {
+    _discarded.addAll(_inFlight);
     final d = await dir();
     if (d == null || !await d.exists()) return;
     for (final f in await _files(d)) {
-      if (_inFlight.contains(_idOf(f.path))) continue;
+      final id = _idOf(f.path);
+      if (_inFlight.contains(id)) {
+        _discarded.add(id);
+        continue;
+      }
       try {
         await f.delete();
       } catch (_) {}
@@ -334,6 +438,11 @@ class FeedbackOutbox {
         return null;
       }
       final outcome = await _post(body);
+      if (_discarded.contains(id)) {
+        // Discarded mid-upload (#1271): whatever the outcome, keep nothing.
+        await claimed.delete();
+        return outcome;
+      }
       switch (outcome) {
         case FeedbackPostOutcome.delivered:
           await claimed.delete();
@@ -347,7 +456,13 @@ class FeedbackOutbox {
     } catch (err) {
       _log('send error for $id: ${err.runtimeType}');
       try {
-        if (await claimed.exists()) await claimed.rename(pendingFile.path);
+        if (await claimed.exists()) {
+          if (_discarded.contains(id)) {
+            await claimed.delete();
+          } else {
+            await claimed.rename(pendingFile.path);
+          }
+        }
       } catch (_) {}
       return FeedbackPostOutcome.failed;
     } finally {
@@ -372,6 +487,27 @@ class FeedbackOutbox {
         _log('report $id was interrupted mid-upload; kept, not resent');
       } catch (_) {}
     }
+  }
+
+  /// Delete entries (any state, never [keep] or one in flight) last written
+  /// more than [maxAge] ago. Returns how many were dropped.
+  Future<int> _expire(Directory d, {String? keep}) async {
+    final cutoff = _now().subtract(maxAge);
+    var expired = 0;
+    for (final f in await _files(d)) {
+      final id = _idOf(f.path);
+      if (id == keep || _inFlight.contains(id)) continue;
+      try {
+        if ((await f.lastModified()).isBefore(cutoff)) {
+          await f.delete();
+          expired++;
+        }
+      } catch (_) {}
+    }
+    if (expired > 0) {
+      _log('dropped $expired report(s) older than ${maxAge.inDays} days');
+    }
+    return expired;
   }
 
   /// Drop the OLDEST entries (any state, never [keep] or one in flight) until

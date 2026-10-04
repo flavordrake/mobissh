@@ -12,6 +12,7 @@ class _FakeOutbox implements FeedbackOutbox {
   int flushes = 0;
   bool? lastAuto;
   int discards = 0;
+  OutboxFlushResult flushResult = const OutboxFlushResult(sent: 2);
 
   @override
   Future<OutboxStatus> status() async => current;
@@ -21,7 +22,7 @@ class _FakeOutbox implements FeedbackOutbox {
     flushes++;
     lastAuto = auto;
     current = const OutboxStatus(rejected: 1);
-    return const OutboxFlushResult(sent: 2);
+    return flushResult;
   }
 
   @override
@@ -56,6 +57,20 @@ void main() {
     expect(outbox.lastAuto, isFalse, reason: 'a user tap ignores backoff');
     expect(find.text('0 bug reports waiting to send'), findsOneWidget);
     expect(find.textContaining('Sent 2'), findsOneWidget);
+  });
+
+  // #1271: reports older than 30 days are dropped; say so, like the cap.
+  testWidgets('Send now reports saved reports that expired', (tester) async {
+    final outbox = _FakeOutbox()
+      ..flushResult = const OutboxFlushResult(sent: 1, expired: 1);
+    await tester.pumpWidget(_host(outbox));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('outbox-send-now')));
+    await tester.pumpAndSettle();
+    expect(
+      find.textContaining('1 older than 30 days deleted'),
+      findsOneWidget,
+    );
   });
 
   testWidgets('Discard asks first, then empties the outbox', (tester) async {
