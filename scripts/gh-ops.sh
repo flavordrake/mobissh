@@ -361,9 +361,17 @@ case "$CMD" in
       exit 1
     fi
 
-    # Step 2: Close issue
-    echo "==> Closing issue #${ISSUE_NUM}" >&2
-    gh issue close "$ISSUE_NUM" --comment "Fixed in PR #${PR_NUM}" 2>/dev/null || true
+    # Step 2: Close issue — only when the PR body closes it (Closes/Fixes/
+    # Resolves #N). A "Refs #N" PR used to close umbrellas still in progress
+    # (#1135, #1259, #1277); see scripts/lib/pr-closes.sh.
+    source "$(dirname "$0")/lib/pr-closes.sh"
+    PR_BODY=$(gh pr view "$PR_NUM" --json body --jq '.body' 2>/dev/null || true)
+    if pr_closes_issue "$PR_BODY" "$ISSUE_NUM"; then
+      echo "==> Closing issue #${ISSUE_NUM}" >&2
+      gh issue close "$ISSUE_NUM" --comment "Fixed in PR #${PR_NUM}" 2>/dev/null || true
+    else
+      echo "==> Leaving issue #${ISSUE_NUM} open (PR #${PR_NUM} does not say Closes/Fixes #${ISSUE_NUM})" >&2
+    fi
 
     # Step 3: Remove bot label
     gh issue edit "$ISSUE_NUM" --remove-label bot 2>/dev/null || true
