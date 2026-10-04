@@ -1,6 +1,6 @@
 # MobiSSH — Privacy Policy
 
-**Effective date:** 2026-07-02
+**Effective date:** 2026-10-04
 **App:** MobiSSH (`com.flavordrake.mobissh`)
 **Contact:** flavordrake@gmail.com
 
@@ -24,7 +24,8 @@ never sell or share your data.
   SSH server *you* are connecting to, over the encrypted SSH channel. They are
   never sent to the developer.
 - **Connection profiles & app settings** — hostnames, ports, usernames,
-  favorites, font size, and preferences are stored locally on the device.
+  favorites, font size, and preferences are stored locally on the device. A bug
+  report you send includes a short list of settings, described in section 3.
 
 ## 2. Data that flows only between you and your servers
 
@@ -47,16 +48,29 @@ version; it does not collect terminal output or credentials, though an error
 message can quote what the app was handling, such as a file name) and uploads it to the same diagnostics
 endpoint on the next launch or the next successful connection, without asking.
 
-**Update checks.** A sideloaded copy of the app reads a small version file from
-the developer's distribution host on start, on resume and from Settings →
-Updates, to offer newer builds. The request carries nothing about you or your
-sessions. The Play Store build does not include this.
+**Update checks.** A sideloaded copy of the app reads a small version file
+(`android-latest.json`) from the developer's distribution host on start, on
+resume and from Settings → About & updates, to offer newer builds. When a newer
+build is offered and the device is on an unmetered network (Wi-Fi), the app also
+downloads that APK from the same host in the background and keeps it in its
+private cache until you install it. These requests carry nothing about you or
+your sessions. The Play Store build does not include this.
 
 **A bug report may contain:**
 - a **screenshot** of the app at the moment you report, and short recent frames;
 - recent **terminal I/O traces** (the bytes rendered on screen, scroll and
-  gesture logs) — used to reproduce display/input bugs;
-- **connection and diagnostic logs** and any pending **crash report**;
+  gesture logs, the terminal's automatic replies) — used to reproduce
+  display/input bugs;
+- **connection, app-lifecycle, tmux control-mode and diagnostic logs**,
+  link-detection layout data, and any pending **crash report**;
+- a **settings snapshot**: only these settings, picked by name — text size,
+  default font, default terminal theme, whether the compose bar is shown, the
+  terminal renderer, whether sessions are kept alive in the background, whether
+  the battery-optimization prompt was shown, tmux control mode, the link
+  detection settings (which types are on, intensity, gutter side and mode, and
+  the package name of the browser you chose for links), whether experimental
+  settings are shown. No hostnames, ports, usernames, passwords, keys or
+  passphrases are included, and no other profile details;
 - your **device model, OS version, and the app version**.
 
 **Because those traces and the screenshot capture what was on your screen, they
@@ -69,11 +83,34 @@ text that would be uploaded. Nothing leaves your device until you tap **Send**;
 password-, token-, and key-looking strings from the text logs — but this is
 **best-effort, not a guarantee**, which is why *you* review the images yourself.
 
+**Reports waiting to send are stored on your device.** When you tap **Send**,
+the report (including its screenshot, frames, terminal traces and logs) is first
+written to the app's private storage, then uploaded. On Android that storage is
+excluded from cloud backup and device-to-device transfer. If the upload fails,
+for example because you are offline, the report stays there and the app sends it
+automatically on a later launch, connection or return to the app. Limits and
+clean-up:
+- at most **10 reports or 50 MB**; when a new report would exceed that, the
+  oldest saved reports are deleted;
+- a saved report older than **30 days** is deleted without being sent, and the
+  app tells you;
+- a report is deleted from the device as soon as it is delivered;
+- a report the server refuses is kept, marked as refused, and never retried;
+  one interrupted mid-upload is kept and never resent automatically;
+- **Settings → Advanced → Diagnostics** shows how many reports are waiting,
+  refused or interrupted, and lets you send them now or **Discard** all of them.
+
 - **Purpose:** solely to diagnose and fix the reported bug.
 - **Recipients:** the developer. Not shared with, sold to, or used by any third
   party or advertiser.
-- **Retention:** bug-report bundles are kept only as long as needed to resolve
-  the issue and no longer than **30 days**, then deleted.
+- **What the server keeps:** the screenshot and frames, your note, the logs and
+  traces listed above, the settings snapshot, which part of the app sent the
+  report, and the device and app version.
+- **Retention:** there is **no automatic deletion**. The developer's server has
+  a retention setting that deletes reports older than a set number of days, but
+  it is off by default, so reports are kept until the developer deletes them.
+  Reports from the Play Store build go to a separate developer-owned storage
+  bucket, which also has no automatic expiry configured in this project.
 - **Deletion on request:** email flavordrake@gmail.com to have any report you sent
   deleted.
 
@@ -96,7 +133,8 @@ password-, token-, and key-looking strings from the text logs — but this is
 - No third-party analytics, tracking, or profiling SDKs.
 - No selling, renting, or sharing of your data.
 - No background collection or transmission of your session content, credentials,
-  or usage. The only automatic upload is the crash report described in section 3.
+  or usage. The only automatic uploads are the crash report described in
+  section 3 and the resending of bug reports you already chose to send.
 
 ## 6. Children
 

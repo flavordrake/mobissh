@@ -43,10 +43,16 @@ Android is the primary platform; Linux and macOS desktop builds exist.
 - **SSH key library.** Paste a key once, name it, and attach it to any number of profiles. A key that does not parse, or a wrong passphrase, is refused when you add it. Add a key straight from the profile editor, and copy its public key from the Keys screen or the editor.
 - **Host keys.** First contact asks you to trust the fingerprint. A changed key refuses to connect and offers a Review screen with both fingerprints; the new key is never trusted in one tap. A key saved by an older version (MD5 format) asks once to re-confirm, showing the saved MD5, the new SHA256 and the `ssh-keygen` commands that print both on the server.
 - **Port forwarding.** Local forwards (`ssh -L`, bound to 127.0.0.1), optionally re-armed on every connect.
-- **Encrypted backup.** Export everything (profiles, passwords, keys, host-key trust, settings) to one passphrase-encrypted file, and import it on another device.
+- **Encrypted backup.** Export everything (profiles, passwords, keys, host-key trust, settings) to one passphrase-encrypted file, and import it on another device. An import that skips entries lists each skipped entry and the reason in a dialog that stays until you close it.
 - **`mobissh://` links.** Other apps can open a saved profile, attach a tmux session, or select a tmux window. The app asks before a link connects, unless you allowed that profile.
-- **Themes and fonts.** 38 terminal palettes (per profile, or per session from the session menu) and 6 bundled monospace fonts with adjustable size.
+- **Themes and fonts.** 38 terminal palettes (per profile, or per session from the session menu) and 7 bundled monospace fonts (JetBrains Mono, Fira Code, Cascadia Code, Roboto Mono, Ubuntu Mono, Cousine and Iosevka) with adjustable size.
 - **Tablets.** In a large landscape window the session bar moves to the top and the keybar hides by default.
+
+### Settings, updates and bug reports
+
+- **Settings** has five sections: Connections (the SSH key library), Terminal (text size, default font), Links & paths (detection on or off, the browser for links, the Detection lab), Background (keep sessions alive, battery optimization) and About & updates. A collapsed Advanced section holds diagnostics and a "Show experimental settings" switch; while it is off, Advanced says when a hidden experimental setting is still on.
+- **In-app updates (sideloaded APK).** The app checks its install host for a newer build on start and on resume. On Wi-Fi (an unmetered network) it downloads and verifies the update in the background, so Install goes straight to the Android installer. The offer shows as a banner on the home screen, a one-time prompt and an "Install update" row in the session menu while you are in a session, and under Settings → About & updates. After the update the app says "Updated to …" with a "What's new" button. The Play Store build has no self-update, and an APK from GitHub releases gets no offers when it cannot reach the maintainer's install host.
+- **Bug reports that could not be sent are kept.** If Send fails (for example offline), the report is saved on the device and sent automatically later; you can also retry or share it as a file. Settings → Advanced → Diagnostics shows how many reports are waiting, with Send now and Discard.
 
 ## Install
 
