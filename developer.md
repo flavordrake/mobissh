@@ -23,7 +23,7 @@ Building, testing and operating MobiSSH, and the diagnostic and distribution fea
 | Telemetry rings (connect, lifecycle, gesture, control-mode, paint and frame stats, scroll and SGR traces) | yes, collected in memory, sent only inside a bug report | none |
 | Raw terminal byte traces | no | `MOBISSH_RAW_DIAGNOSTICS=true` (`native/lib/diagnostics/diagnostics_config.dart`) |
 | Crash reports, uploaded on next launch or connect | yes, automatic | endpoint hard-coded to the tailnet host (`native/lib/diagnostics/crash_reporter.dart`); currently rejected for lack of the key (#1243) |
-| Settings → Advanced (share feedback offline, last crash; force crash upload, connection audit and tmux control mode behind "Show experimental settings", stored in `mobissh.ui.featureFlags`) | yes, collapsed | none |
+| Settings → Advanced (share feedback offline, last crash, the bug-report outbox; force crash upload, connection audit and tmux control mode behind "Show experimental settings", stored in `mobissh.ui.featureFlags`) | yes, collapsed | none |
 | Self-update (banner and Settings → About & updates) | sideloaded APK only | `MOBISSH_BUILD` must be set; the Play bundle swaps in `android/app/src/play/AndroidManifest.xml`, which drops the installer permission and provider |
 | tmux control mode | yes, opt-in setting, off by default | `kControlModeScrollRenders = false` keeps its scrollback off |
 | Body text selection | no | `kBodyTextSelectionEnabled = false`; the gutter is the copy path |
@@ -76,9 +76,24 @@ Uploads land in `test-results/uploads/` on the dev host:
 
 Uploads require the `X-MobiSSH-Key` header and are rate limited (`server/feedback-guard.js`). The key is baked into release builds, so anyone holding the APK can extract it; it limits drive-by traffic, not determined abuse.
 
+The server's stored fields are an allowlist in `saveBugReport` (`server/feedback-store.js`); a field the app sends but that is not named there is dropped. `FEEDBACK_RETENTION_DAYS` (default 0, keep everything) turns on the sweep in `server-feedback/index.js`.
+
+On the device, every bug report goes through the outbox (`native/lib/diagnostics/feedback_outbox.dart`): it is written to `<app documents>/feedback-outbox/` before the POST. One file per report, the suffix is the state:
+
+- `.tmp`: an atomic write in progress, renamed to `.json` when complete;
+- `.json`: pending, sent by the next flush;
+- `.sending`: claimed by an upload in progress (the rename is the lock);
+- `.unconfirmed`: a `.sending` left by a process that died mid-upload. The relay has no idempotency key, so it is kept and never resent automatically (at most once);
+- `.rejected`: the relay answered 401/403; kept, never retried;
+- `.corrupt`: not valid JSON; kept, never sent.
+
+A 2xx deletes the file; any other failure renames it back to `.json`. Flushes run on launch (`native/lib/main.dart`), on a successful connect (`native/lib/ui/connect_form.dart`) and on resume, with exponential backoff from 30 s to 30 min after a failed flush; Send now in Settings → Advanced → Diagnostics skips the backoff. Caps are 10 reports and 50 MB, enforced by dropping the oldest entries. Only file names and counts are logged.
+
+The settings snapshot a report carries is the allowlist `kSettingsSnapshotKeys` in `native/lib/diagnostics/settings_snapshot.dart`; a new setting is absent from reports until it is named there. It includes `mobissh.files.sort.v1`, whose blob is keyed by `host:port:username` per profile, so those labels reach the server; [docs/PRIVACY.md](docs/PRIVACY.md) says so.
+
 ## Build, ship and version
 
-Every Flutter call goes through `scripts/flutter-cmd.sh`. Versions follow [docs/VERSIONING.md](docs/VERSIONING.md): `x.y.z[-STAGE]+B` in `native/pubspec.yaml`, with B a global build ordinal that never resets.
+Every Flutter call goes through `scripts/flutter-cmd.sh`. On a host with the fleet build runner (`/home/dev/build-runner`), it sources that runner's `flutter-route.sh`, which sends `flutter analyze`, headless `flutter test` and `flutter build apk` to the fleet buildbox. Release APKs come back unsigned and are signed and verified locally, so the keystore never leaves the dev host. Device and integration tests (`integration_test`, `-d`, `--tags integration`) and every other command run locally, as does everything when `CI=true`. `FLEET_BUILD_REMOTE=1` forces local execution; it is a fallback only, not the normal path. Versions follow [docs/VERSIONING.md](docs/VERSIONING.md): `x.y.z[-STAGE]+B` in `native/pubspec.yaml`, with B a global build ordinal that never resets.
 
 - `scripts/ship-native.sh --message-file F`: bumps B (`scripts/lib/next-build-version.sh`), refuses to ship on doc drift (`scripts/doc-drift.sh --block`) or a full disk (`scripts/lib/disk-guard.sh`), commits, pushes, and runs `scripts/native-release-apk.sh` (release keystore required), which stamps the APK, publishes it to `native-dist/`, regenerates the install page, writes the self-update manifest and announces the build (`scripts/notify-build.sh`).
 - `scripts/build-release-aab.sh`: the signed Play bundle ([docs/PLAY_STORE_SUBMISSION.md](docs/PLAY_STORE_SUBMISSION.md)).
