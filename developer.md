@@ -100,6 +100,21 @@ Every Flutter call goes through `scripts/flutter-cmd.sh`. On a host with the fle
 - macOS: [native/MAC-BUILD.md](native/MAC-BUILD.md) (`scripts/mac-build-via-hub.sh`, `scripts/dispatch-mac-build.sh`, `scripts/publish-native-macos.sh`, `scripts/render-macos-slot.sh`, the Mac-side `scripts/mac/`). Linux desktop: [native/DESKTOP.md](native/DESKTOP.md) (`scripts/setup-linux-desktop-toolchain.sh`, `scripts/desktop-smoke.sh`).
 - Update `native-release-notes.md` each release; its top section is the "What to verify" list on the install page.
 
+### Dependency verification
+
+Release builds compile only dependencies whose hashes are committed (#1277): the shared buildbox caches are not trusted, so a poisoned cached package must fail the build rather than be signed and shipped.
+
+- Dart: every hosted package in `native/pubspec.lock` carries a sha256. `scripts/native-release-apk.sh` runs `flutter pub get --enforce-lockfile` before the release build and stops if the lock is stale or a hash differs.
+- Gradle: `native/android/gradle/verification-metadata.xml` pins a sha256 for every artifact the Android build resolves, including the Flutter Gradle plugin's own build and the Flutter engine artifacts. `native/android/gradle.properties` sets `org.gradle.dependency.verification=strict`, so an artifact that is missing from the file or has a different hash fails the build.
+
+After changing a Dart dependency, commit the updated `pubspec.lock` with it. After any change that alters the Android dependency set (a plugin added or bumped, an AGP, Kotlin or Gradle bump, or a Flutter upgrade, which changes the engine artifacts), regenerate the Gradle file from `native/android`, with `local.properties` naming `flutter.sdk` and after a `flutter pub get`:
+
+```
+./gradlew --write-verification-metadata sha256 help
+```
+
+Then run a debug `scripts/flutter-cmd.sh --in native build apk --debug`. The `help` run records what Gradle resolves at configuration time, but not what tasks resolve while they run (aapt2 and the lint jars, for example). To list those in one pass, set `org.gradle.dependency.verification=lenient` for that one build, add the reported artifacts' sha256 (fetched over HTTPS from Google Maven or Maven Central), and set it back to `strict` before committing; the infra test `test/infra/dependency-verification.test.js` fails while it is lenient. Review the diff before committing: a hash that changed for a version that did not change is the attack the file exists to catch.
+
 ### Tagging a release
 
 1. RC: set `native/pubspec.yaml` to `x.y.z-rc.N+B`, ship, tag `native-vx.y.z-rc.N`, and publish a GitHub prerelease with the stamped arm64 APK.
