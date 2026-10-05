@@ -4,7 +4,8 @@
 # Captures the recurring delivery ritual (memory: feedback_apk_timestamp):
 #   1. flutter build apk --release (signed with the release keystore — see
 #      memory native-android-signing; REFUSES to build if key.properties is
-#      missing, #1215), with --dart-define=MOBISSH_BUILD=<B>.
+#      missing, #1215), with --dart-define=MOBISSH_BUILD=<B>. REFUSES when the
+#      active Flutter is not the one pinned in native/.flutter-version (#1277).
 #   2. Copy to public/mobissh-native-<ISO-8601-ts>.apk AND the stable
 #      public/mobissh-native.apk alias.
 #   3. docker cp BOTH into mobissh-prod:/app/public/ so the running container
@@ -24,14 +25,14 @@ mkdir -p "$MOBISSH_TMPDIR" "$MOBISSH_LOGDIR"
 LOGFILE="${MOBISSH_LOGDIR}/native-release-apk.log"
 exec > >(tee -a "$LOGFILE") 2>&1
 
-# #1215 R4: refuse to build without the release keystore. Gradle silently falls
-# back to the DEBUG keystore when key.properties is missing; a debug-signed APK
-# can never upgrade an installed release copy and the in-app updater refuses it
+# #1215 R4: refuse to build without the release keystore. Without key.properties
+# gradle emits an UNSIGNED release (#1277; it used to be DEBUG-signed), which can
+# never upgrade an installed release copy and the in-app updater refuses it
 # (signing-cert match, docs/self-update.md R10). Same path gradle reads.
 KEY_PROPS="${MOBISSH_KEY_PROPERTIES:-/home/dev/.mobissh-android/key.properties}"
 if [[ ! -f "$KEY_PROPS" ]]; then
   echo "! FATAL: release keystore config missing (${KEY_PROPS})." >&2
-  echo "  Without it the APK is DEBUG-signed and cannot upgrade installed copies. Aborting." >&2
+  echo "  Without it the APK is unsigned and cannot upgrade installed copies. Aborting." >&2
   exit 2
 fi
 echo "> release keystore config: ${KEY_PROPS}"
@@ -102,6 +103,23 @@ else
   err "WARNING: no FEEDBACK_KEY (${FEEDBACK_ENV} missing) — bug reports from"
   err "  this build will be REJECTED once prod enforces upload auth (#1115)."
 fi
+
+# #1277: the release is built with the Flutter SDK pinned in native/.flutter-version
+# and nothing else. `--version` is not routed to the buildbox, so this checks the
+# fd-dev SDK; the buildbox image pins its own (3.44.0 today) and the isolated
+# builder (homelab#44) is expected to read this same file.
+FLUTTER_PIN_FILE="${NATIVE_DIR}/.flutter-version"
+if [[ ! -f "$FLUTTER_PIN_FILE" ]]; then
+  err "pinned Flutter version missing (${FLUTTER_PIN_FILE}); refusing an unpinned release"
+  exit 2
+fi
+FLUTTER_PIN="$(tr -d '[:space:]' < "$FLUTTER_PIN_FILE")"
+FLUTTER_ACTIVE="$("${REPO_ROOT}/scripts/flutter-cmd.sh" --version --machine | sed -n 's/.*"frameworkVersion": *"\([^"]*\)".*/\1/p' | head -1 || true)"
+if [[ -z "$FLUTTER_PIN" || "$FLUTTER_ACTIVE" != "$FLUTTER_PIN" ]]; then
+  err "active Flutter ${FLUTTER_ACTIVE:-<unknown>} != pinned ${FLUTTER_PIN:-<empty>} (native/.flutter-version); refusing the release"
+  exit 2
+fi
+log "flutter ${FLUTTER_ACTIVE} matches native/.flutter-version"
 
 # #1277: the release must resolve exactly the hashes pinned in pubspec.lock.
 # `--enforce-lockfile` refuses a lockfile that pubspec.yaml no longer matches and

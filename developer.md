@@ -104,6 +104,8 @@ Every Flutter call goes through `scripts/flutter-cmd.sh`. On a host with the fle
 
 Release builds compile only dependencies whose hashes are committed (#1277): the shared buildbox caches are not trusted, so a poisoned cached package must fail the build rather than be signed and shipped.
 
+- Toolchain: `native/.flutter-version` pins the Flutter SDK. CI installs that version, and `scripts/native-release-apk.sh` refuses a release when the active SDK differs. A release build without `key.properties` comes out unsigned, never debug-signed.
+- Provenance (draft, pending homelab#44): `scripts/verify-release-manifest.py` checks a builder+signer manifest (detached Ed25519 signature, source SHA, project, job, the exact artifact set, hashes and the pinned signing cert). It is not wired into the ship path yet.
 - Dart: every hosted package in `native/pubspec.lock` carries a sha256. `scripts/native-release-apk.sh` runs `flutter pub get --enforce-lockfile` before the release build and stops if the lock is stale or a hash differs.
 - Gradle: `native/android/gradle/verification-metadata.xml` pins a sha256 for every artifact the Android build resolves, including the Flutter Gradle plugin's own build and the Flutter engine artifacts. `native/android/gradle.properties` sets `org.gradle.dependency.verification=strict`, so an artifact that is missing from the file or has a different hash fails the build.
 

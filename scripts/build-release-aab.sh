@@ -9,8 +9,8 @@
 # Signing: the release build uses the signingConfig in app/build.gradle.kts,
 # which loads the keystore from key.properties (MOBISSH_KEY_PROPERTIES or the
 # default ~/.mobissh-android/key.properties). If that config is MISSING, gradle
-# falls back to the DEBUG keystore and Play would reject the upload — so this
-# script FAILS LOUDLY rather than emit a debug-signed bundle.
+# emits an UNSIGNED bundle (#1277) that Play rejects — so this script FAILS
+# LOUDLY rather than emit one.
 #
 # Play requires a MONOTONIC versionCode per upload. This builds at the CURRENT
 # pubspec version (does NOT auto-bump — store versioning is deliberate). Bump the
@@ -32,7 +32,7 @@ exec > >(tee -a "$LOGFILE") 2>&1
 KEY_PROPS="${MOBISSH_KEY_PROPERTIES:-/home/dev/.mobissh-android/key.properties}"
 if [ ! -f "$KEY_PROPS" ]; then
   echo "! FATAL: release keystore config missing ($KEY_PROPS)."
-  echo "  Without it the AAB is DEBUG-signed and Play rejects it. Aborting."
+  echo "  Without it the AAB is unsigned and Play rejects it. Aborting."
   exit 2
 fi
 echo "> release keystore config: $KEY_PROPS"
