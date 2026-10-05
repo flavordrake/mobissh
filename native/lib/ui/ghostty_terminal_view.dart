@@ -3295,6 +3295,14 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     controller.write(
       Uint8List.fromList(ghosttyInputModeResetSequence.codeUnits),
     );
+    // #1229: the session's xterm Terminal is the keybar/compose input seam and
+    // its parsed 2004 decides whether a paste is bracketed. Reset it too, so a
+    // revived plain shell isn't sent markers the pre-drop remote asked for.
+    for (final e in ref.read(sessionsProvider).entries) {
+      if (e.id == widget.sessionId) {
+        e.terminal.write(ghosttyInputModeResetSequence);
+      }
+    }
     // #881: durable ring, not the connect ring — the reset is the one line that
     // explains a later `tracking X → none` transition in a device report.
     clifecycle(
