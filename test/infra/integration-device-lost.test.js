@@ -81,6 +81,32 @@ describe('integration_device_online', () => {
   });
 });
 
+// A test that HANGS never returns, so it never reaches the post-failure probe
+// above. integration_run_one bounds each test with INTEGRATION_TEST_TIMEOUT.
+describe('integration_run_one bounds a hung test', () => {
+  it('fails a test that runs past INTEGRATION_TEST_TIMEOUT instead of waiting forever', () => {
+    const root = mkdtempSync(join(tmpdir(), 'fake-repo-'));
+    spawnSync('mkdir', ['-p', join(root, 'scripts'), join(root, 'native/integration_test')]);
+    writeFileSync(join(root, 'native/integration_test/hang_test.dart'), '// no declarations\n');
+    writeFileSync(join(root, 'scripts/native-connect-test.sh'), '#!/usr/bin/env bash\nsleep 60\n');
+    chmodSync(join(root, 'scripts/native-connect-test.sh'), 0o755);
+    const started = Date.now();
+    const r = spawnSync('bash', ['-c', `source "${LIB}"; integration_run_one integration_test/hang_test.dart`], {
+      encoding: 'utf-8',
+      env: {
+        ...process.env,
+        INTEGRATION_REPO_ROOT: root,
+        INTEGRATION_TEST_TIMEOUT: '1',
+        INTEGRATION_TEST_KILL_AFTER: '1',
+      },
+      timeout: 30000,
+    });
+    assert.notEqual(r.status, 0, 'a hung test is a FAILED test');
+    assert.ok(Date.now() - started < 15000, 'bounded by the timeout, not the hang');
+    assert.match(r.stderr, /TIMED OUT/);
+  });
+});
+
 describe('runners stop on device loss instead of failing every remaining test', () => {
   for (const [name, path] of [['suite', SUITE], ['subset', SUBSET]]) {
     it(`${name}: checks the device after a failure and exits NOT VALIDATED`, () => {
