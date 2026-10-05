@@ -45,7 +45,7 @@ describe('#1277 keyless release builds are unsigned', () => {
   });
 
   it('without key.properties the release signingConfig is null', () => {
-    assert.match(releaseBuildType(code), /signingConfig\s*=\s*if\s*\(keystoreProperties\.isNotEmpty\(\)\)\s*\{[^}]*signingConfigs\.getByName\("release"\)[^}]*\}\s*else\s*\{?\s*null/);
+    assert.match(releaseBuildType(code), /signingConfig\s*=\s*if\s*\(keystoreProperties\.isNotEmpty\(\)[^{]*\)\s*\{[^}]*signingConfigs\.getByName\("release"\)[^}]*\}\s*else\s*\{?\s*null/);
   });
 
   it('native-release-apk.sh still refuses to build without key.properties (#1215)', () => {

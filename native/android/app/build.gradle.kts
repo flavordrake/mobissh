@@ -32,6 +32,13 @@ val isPlayBundle = gradle.startParameter.taskNames.any {
     it.contains("bundle", ignoreCase = true)
 }
 
+// #1277 (homelab#44 joint canary): `flutter build apk
+// --android-project-arg=mobissh.canary=true` builds com.flavordrake.mobissh.canary
+// with its own label, so the disposable-key canary installs beside the real app
+// and never over it. A Gradle property rather than a product flavor: a flavor
+// would rename every APK output path (same reason as isPlayBundle above).
+val isCanary = providers.gradleProperty("mobissh.canary").orNull == "true"
+
 android {
     namespace = "com.flavordrake.mobissh"
 
@@ -63,6 +70,10 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+        manifestPlaceholders["appLabel"] = if (isCanary) "MobiSSH Canary" else "mobissh"
+        if (isCanary) {
+            applicationIdSuffix = ".canary"
+        }
     }
 
     signingConfigs {
@@ -82,7 +93,8 @@ android {
             // buildbox builds keyless and the signer (apksigner today, the
             // isolated homelab#44 signer next) is the only thing that signs a
             // release; a debug fallback made a debug-signed APK look shippable.
-            signingConfig = if (keystoreProperties.isNotEmpty()) {
+            // A canary is never production-signed (it gets a disposable key).
+            signingConfig = if (keystoreProperties.isNotEmpty() && !isCanary) {
                 signingConfigs.getByName("release")
             } else {
                 null
