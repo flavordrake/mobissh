@@ -222,48 +222,76 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
             ),
           ),
           const SizedBox(height: 4),
-          // #672: the actions share one compact strip instead of being
-          // stacked on separate lines, reclaiming vertical space for the
-          // profile list. #1124 adds "Export" (encrypted backup) as a third
-          // action and swaps the Row for a Wrap so all three stay tappable on
-          // narrow (320dp) phones — buttons flow to a second run instead of
-          // overflowing. "New" opens the editor in create mode (#583);
-          // "Import" pulls profiles from the PWA. Settings + Diagnostics live
-          // on the home bottom nav (#611 Part A), not here.
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
+          // One line, always (#672 strip, #1124 Wrap reverted): an icon-only
+          // "+" (New connection, #583 editor) then Import / Export / ssh config
+          // (#1185) sharing the rest, labels scaling down on narrow phones.
+          Row(
             children: [
-              FilledButton.icon(
+              IconButton.filled(
                 key: const Key('new-connection'),
+                tooltip: 'New connection',
                 onPressed: _busy ? null : _newConnection,
-                icon: const Icon(Icons.add),
-                label: Text(_busy ? 'Connecting…' : 'New connection'),
+                icon: _busy
+                    ? const SizedBox.square(
+                        dimension: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.add),
               ),
-              OutlinedButton.icon(
-                key: const Key('open-import-profiles-dialog'),
-                onPressed: _openImportDialog,
-                icon: const Icon(Icons.download_outlined),
-                label: const Text('Import'),
+              const SizedBox(width: 6),
+              _action(
+                const Key('open-import-profiles-dialog'),
+                _openImportDialog,
+                Icons.download_outlined,
+                'Import',
               ),
-              OutlinedButton.icon(
-                key: const Key('open-export-backup-dialog'),
-                onPressed: _openExportDialog,
-                icon: const Icon(Icons.upload_outlined),
-                label: const Text('Export'),
+              const SizedBox(width: 6),
+              _action(
+                const Key('open-export-backup-dialog'),
+                _openExportDialog,
+                Icons.upload_outlined,
+                'Export',
               ),
+              const SizedBox(width: 6),
               // #1185: the OTHER export — profiles as ssh_config text for
               // another machine. Distinct from the encrypted backup above:
               // this one carries no secrets and is readable by ssh itself.
-              OutlinedButton.icon(
-                key: const Key('open-ssh-config-export-dialog'),
-                onPressed: _openSshConfigExportDialog,
-                icon: const Icon(Icons.description_outlined),
-                label: const Text('ssh config'),
+              _action(
+                const Key('open-ssh-config-export-dialog'),
+                _openSshConfigExportDialog,
+                Icons.description_outlined,
+                'ssh config',
               ),
             ],
           ),
         ],
+      ),
+    );
+  }
+
+  /// A compact labelled action sharing the row equally; the label scales down
+  /// rather than wrapping or overflowing at 320dp. Height stays 40dp.
+  Widget _action(Key key, VoidCallback onPressed, IconData icon, String label) {
+    return Expanded(
+      child: OutlinedButton(
+        key: key,
+        onPressed: onPressed,
+        style: OutlinedButton.styleFrom(
+          minimumSize: const Size(0, 40),
+          padding: const EdgeInsets.symmetric(horizontal: 6),
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        ),
+        child: FittedBox(
+          fit: BoxFit.scaleDown,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 18),
+              const SizedBox(width: 4),
+              Text(label),
+            ],
+          ),
+        ),
       ),
     );
   }
