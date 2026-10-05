@@ -11,8 +11,7 @@ plugins {
 // .claude/rules/security.md — never commit storePassword / keyPassword.
 // Default location: /home/dev/.mobissh-android/key.properties. Override
 // with MOBISSH_KEY_PROPERTIES env var. If the file is missing, release
-// builds fall through to the debug keystore (so `flutter run --release`
-// still works in dev).
+// builds come out UNSIGNED (#1277); sign them separately with apksigner.
 val keystorePropertiesFile = file(
     System.getenv("MOBISSH_KEY_PROPERTIES")
         ?: "/home/dev/.mobissh-android/key.properties"
@@ -32,6 +31,13 @@ val keystoreProperties = Properties().apply {
 val isPlayBundle = gradle.startParameter.taskNames.any {
     it.contains("bundle", ignoreCase = true)
 }
+
+// #1277 (homelab#44 joint canary): `flutter build apk
+// --android-project-arg=mobissh.canary=true` builds com.flavordrake.mobissh.canary
+// with its own label, so the disposable-key canary installs beside the real app
+// and never over it. A Gradle property rather than a product flavor: a flavor
+// would rename every APK output path (same reason as isPlayBundle above).
+val isCanary = providers.gradleProperty("mobissh.canary").orNull == "true"
 
 android {
     namespace = "com.flavordrake.mobissh"
@@ -64,6 +70,10 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+        manifestPlaceholders["appLabel"] = if (isCanary) "MobiSSH Canary" else "mobissh"
+        if (isCanary) {
+            applicationIdSuffix = ".canary"
+        }
     }
 
     signingConfigs {
@@ -79,10 +89,15 @@ android {
 
     buildTypes {
         release {
-            signingConfig = if (keystoreProperties.isNotEmpty()) {
+            // #1277: no key.properties -> UNSIGNED, never debug-signed. The
+            // buildbox builds keyless and the signer (apksigner today, the
+            // isolated homelab#44 signer next) is the only thing that signs a
+            // release; a debug fallback made a debug-signed APK look shippable.
+            // A canary is never production-signed (it gets a disposable key).
+            signingConfig = if (keystoreProperties.isNotEmpty() && !isCanary) {
                 signingConfigs.getByName("release")
             } else {
-                signingConfigs.getByName("debug")
+                null
             }
             // R8 runs on the shipped release build (proven by the #915
             // Gson/TypeToken crash from flutter_local_notifications). Make

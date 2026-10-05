@@ -55,3 +55,6 @@ app.*.map.json
 key.properties
 *.jks
 *.keystore
+# Staged release build inputs (#1277, scripts/native-release-apk.sh); deleted
+# after each build, ignored in case a build is killed before cleanup.
+.build-inputs.*.json

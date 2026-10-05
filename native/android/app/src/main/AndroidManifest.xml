@@ -40,7 +40,7 @@
          bug-report outbox path from backup and device transfer; everything
          else keeps the default Auto Backup behaviour. -->
     <application
-        android:label="mobissh"
+        android:label="${appLabel}"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
         android:dataExtractionRules="@xml/data_extraction_rules"

@@ -12,7 +12,7 @@
 # change to the manifests or the gradle sourceSets block.
 #
 # Signing: uses whatever key.properties resolves to; without one the builds
-# are debug-signed, which does not affect the manifest under test.
+# are unsigned (#1277), which does not affect the manifest under test.
 # Exit 0 = both assertions hold. 1 = assertion failed. 2 = build failed.
 set -euo pipefail
 
