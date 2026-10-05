@@ -11,7 +11,6 @@ services:
       NODE_ENV: production
       TS_AUTHKEY: "${TS_AUTHKEY:-}"
       TS_HOSTNAME: "${TS_HOSTNAME:-mobissh}"
-      TS_SERVE: "1"
       TS_SERVE_PORT: "${TS_SERVE_PORT:-443}"
       # #997: upload/telemetry routes proxy to the dedicated feedback service
       # (fail-open: LOCAL handling if it's unreachable, so a report is never

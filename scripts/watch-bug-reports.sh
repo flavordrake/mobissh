@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # scripts/watch-bug-reports.sh
 #
-# Watch test-results/uploads/ for new bug-report AND drop-telemetry JSON
-# files. Emits one line per new file to stdout — designed to be driven by
-# Claude's Monitor tool.
+# Watch test-results/uploads/ for new bug-report JSON files. Emits one line
+# per new file to stdout — designed to be driven by Claude's Monitor tool.
 #
 # Event lines:
 #   BUG  <iso-timestamp> <abs-png-path>  <title>             (user-filed)
-#   DROP <iso-timestamp> <abs-meta-path> <reason> <host>     (auto-upload)
+#
+# The DROP lines for /api/drop-telemetry went with that route (#1261).
 #
 # Existing files at startup are recorded as "seen" so we only emit truly new
 # events. Polls every 2 seconds (local file system, no rate limit concern).
@@ -24,7 +24,7 @@ mkdir -p "$UPLOADS_DIR"
 
 # Seed the seen set with whatever's already there — only NEW files trigger.
 : > "$SEEN_FILE"
-for f in "$UPLOADS_DIR"/*-bug-report.json "$UPLOADS_DIR"/*-drop-telemetry.json; do
+for f in "$UPLOADS_DIR"/*-bug-report.json; do
   [ -e "$f" ] || continue
   basename "$f" >> "$SEEN_FILE"
 done
@@ -54,22 +54,6 @@ while true; do
     ts=${name%-bug-report.json}
     png_abs="$(pwd)/$UPLOADS_DIR/${ts}-bug-report.png"
     echo "BUG $ts $png_abs $title"
-  done
-
-  # Drop telemetry — auto-uploaded on every recovery, throttled to 5min.
-  for f in "$UPLOADS_DIR"/*-drop-telemetry.json; do
-    [ -e "$f" ] || continue
-    name=$(basename "$f")
-    if grep -Fxq "$name" "$SEEN_FILE"; then continue; fi
-    echo "$name" >> "$SEEN_FILE"
-
-    reason=$(read_field "$f" reason)
-    [ -z "$reason" ] && reason="recovered"
-    host=$(read_field "$f" host)
-    [ -z "$host" ] && host="(unknown)"
-    ts=${name%-drop-telemetry.json}
-    meta_abs="$(pwd)/$UPLOADS_DIR/$name"
-    echo "DROP $ts $meta_abs $reason $host"
   done
 
   sleep 2

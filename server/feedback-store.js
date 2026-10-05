@@ -1,14 +1,15 @@
 'use strict';
 
 /**
- * server/feedback-store.js — bug-report/telemetry persistence (#997).
+ * server/feedback-store.js — bug-report/crash persistence (#997).
  *
- * Single source of truth for the four feedback ingestion routes:
+ * Single source of truth for the feedback ingestion routes:
  *
  *   POST /api/bug-report         user-filed report (screenshot, frames, logs, traces)
- *   POST /api/drop-telemetry     auto-upload on connection-drop recovery
- *   POST /api/gesture-telemetry  auto-upload on gesture/IME anomaly (#502)
  *   POST /api/native-crash       native APK crash reports (#501)
+ *
+ * The PWA's /api/drop-telemetry and /api/gesture-telemetry were removed in
+ * #1261: nothing had posted to them since 2026-06-04.
  *
  * Extracted VERBATIM from server/index.js so the dedicated feedback-service
  * container (server-feedback/index.js) and mobissh-prod's fail-open local
@@ -27,8 +28,6 @@ const path = require('path');
 
 // Request-body cap for /api/native-crash (stack traces are far smaller).
 const MAX_CRASH_BYTES = 1024 * 1024;
-// Per-file cap for the gesture-telemetry log sidecar.
-const MAX_GESTURE_LOG_BYTES = 1024 * 1024;
 // Frame-burst guard for bug-report repro recordings.
 const MAX_FRAMES = 120;
 // Per-decoded-image cap (#484): a screenshot/frame whose DECODED bytes exceed
@@ -46,8 +45,6 @@ const MAX_TERM_REPLY_EVENTS = 8192;
 /** The routes this store handles (also used by the prod proxy gate). */
 const FEEDBACK_ROUTES = [
   '/api/bug-report',
-  '/api/drop-telemetry',
-  '/api/gesture-telemetry',
   '/api/native-crash',
 ];
 
@@ -98,88 +95,6 @@ function readBody(req, maxBytes) {
       if (!aborted) reject(err);
     });
   });
-}
-
-/** Save a drop-telemetry payload. Returns the meta object written to disk. */
-function saveDropTelemetry(data, reportDir) {
-  const { kind, reason, sessionId, host, ts, userAgent, url, version, connectLog, gestureLog } = data;
-  const stamp = stampNow();
-  fs.mkdirSync(reportDir, { recursive: true });
-
-  let connectLogFile = '';
-  if (Array.isArray(connectLog) && connectLog.length > 0) {
-    connectLogFile = `${stamp}-drop-telemetry.connect-log.json`;
-    fs.writeFileSync(
-      path.join(reportDir, connectLogFile),
-      JSON.stringify(connectLog, null, 2),
-    );
-  }
-
-  let gestureLogFile = '';
-  if (Array.isArray(gestureLog) && gestureLog.length > 0) {
-    gestureLogFile = `${stamp}-drop-telemetry.gesture-log.json`;
-    fs.writeFileSync(
-      path.join(reportDir, gestureLogFile),
-      JSON.stringify(gestureLog, null, 2),
-    );
-  }
-
-  const meta = {
-    kind: kind || 'drop-recovery',
-    reason: reason || '',
-    sessionId: sessionId || '',
-    host: host || '',
-    ts: ts || Date.now(),
-    stamp,
-    userAgent: userAgent || '',
-    url: url || '',
-    version: version || '',
-    connectLogFile,
-    connectLogEventCount: Array.isArray(connectLog) ? connectLog.length : 0,
-    gestureLogFile,
-    gestureLogEventCount: Array.isArray(gestureLog) ? gestureLog.length : 0,
-  };
-  fs.writeFileSync(path.join(reportDir, `${stamp}-drop-telemetry.json`), JSON.stringify(meta, null, 2));
-  console.log(`[drop-telemetry] ${stamp} reason="${meta.reason}" host="${meta.host}" connectEvents=${meta.connectLogEventCount} gestureEvents=${meta.gestureLogEventCount}`);
-  return meta;
-}
-
-/** Save a gesture-telemetry payload. Returns the meta object written to disk. */
-function saveGestureTelemetry(data, reportDir) {
-  const { kind, reason, eventCount, ts, userAgent, url, version, log } = data;
-  const stamp = stampNow();
-  fs.mkdirSync(reportDir, { recursive: true });
-
-  let logFile = '';
-  if (Array.isArray(log) && log.length > 0) {
-    logFile = `${stamp}-gesture-telemetry.gesture-log.json`;
-    const logPath = path.join(reportDir, logFile);
-    const logBody = JSON.stringify(log, null, 2);
-    // Cap individual log files at ~1MB to bound disk usage.
-    const safeBody = Buffer.byteLength(logBody, 'utf8') > MAX_GESTURE_LOG_BYTES
-      ? JSON.stringify(log.slice(-Math.floor(log.length / 2)), null, 2)
-      : logBody;
-    fs.writeFileSync(logPath, safeBody);
-  }
-
-  const meta = {
-    kind: kind || 'gesture-anomaly',
-    reason: reason || '',
-    eventCount: typeof eventCount === 'number' ? eventCount : 0,
-    ts: ts || Date.now(),
-    stamp,
-    userAgent: userAgent || '',
-    url: url || '',
-    version: version || '',
-    logFile,
-    logEventCount: Array.isArray(log) ? log.length : 0,
-  };
-  fs.writeFileSync(
-    path.join(reportDir, `${stamp}-gesture-telemetry.json`),
-    JSON.stringify(meta, null, 2),
-  );
-  console.log(`[gesture-telemetry] ${stamp} reason="${meta.reason}" events=${meta.eventCount} logEvents=${meta.logEventCount}`);
-  return meta;
 }
 
 /**
@@ -391,11 +306,9 @@ function saveBugReport(data, reportDir) {
 
 /**
  * Dispatch a buffered feedback request body. Route must be one of
- * FEEDBACK_ROUTES. Returns { status, body, sse } where `body` is the exact
- * JSON response string and `sse` is an optional { event, data } for callers
- * that broadcast (mobissh-prod's local path; the standalone service has no
- * SSE clients and ignores it). Response bodies match the pre-extraction
- * server/index.js handlers byte-for-byte.
+ * FEEDBACK_ROUTES. Returns { status, body } where `body` is the exact JSON
+ * response string. Response bodies match the pre-extraction server/index.js
+ * handlers byte-for-byte.
  */
 function handleFeedbackRequest(route, rawBody, reportDir) {
   if (route === '/api/native-crash') {
@@ -404,7 +317,7 @@ function handleFeedbackRequest(route, rawBody, reportDir) {
       const body = r.raw
         ? JSON.stringify({ ok: true, raw: true, path: r.file })
         : JSON.stringify({ ok: true, path: r.file });
-      return { status: 200, body, sse: { event: 'native-crash', data: { kind: r.kind, stamp: r.stamp, path: r.file } } };
+      return { status: 200, body };
     } catch (err) {
       console.error('[native-crash] write error:', err.message);
       return { status: 500, body: '{"error":"failed to persist crash"}' };
@@ -425,29 +338,9 @@ function handleFeedbackRequest(route, rawBody, reportDir) {
 
 function dispatchJsonRoute(route, data, reportDir) {
   switch (route) {
-    case '/api/drop-telemetry': {
-      const meta = saveDropTelemetry(data, reportDir);
-      return {
-        status: 200,
-        body: JSON.stringify({ ok: true, stamp: meta.stamp }),
-        sse: { event: 'drop-telemetry', data: { reason: meta.reason, host: meta.host, stamp: meta.stamp } },
-      };
-    }
-    case '/api/gesture-telemetry': {
-      const meta = saveGestureTelemetry(data, reportDir);
-      return {
-        status: 200,
-        body: JSON.stringify({ ok: true, stamp: meta.stamp }),
-        sse: { event: 'gesture-telemetry', data: { reason: meta.reason, eventCount: meta.eventCount, stamp: meta.stamp } },
-      };
-    }
     case '/api/bug-report': {
-      const meta = saveBugReport(data, reportDir);
-      return {
-        status: 200,
-        body: JSON.stringify({ ok: true, saved: true }),
-        sse: { event: 'bug-report', data: { title: meta.title, saved: true } },
-      };
+      saveBugReport(data, reportDir);
+      return { status: 200, body: JSON.stringify({ ok: true, saved: true }) };
     }
     default:
       return { status: 404, body: '{"error":"unknown feedback route"}' };
@@ -488,8 +381,6 @@ module.exports = {
   MAX_CRASH_BYTES,
   readBody,
   stampNow,
-  saveDropTelemetry,
-  saveGestureTelemetry,
   saveNativeCrash,
   saveBugReport,
   handleFeedbackRequest,

@@ -1,9 +1,8 @@
 // Ghostty (flterm / libghostty-vt) session terminal view (#684, #582, #686).
 //
-// The OPT-IN alternate to the xterm.dart `TerminalView` rendered by
-// `_SessionTerminalBody` in terminal_screen.dart. Selected via the persisted
-// `terminalBackendProvider` (TerminalBackend.ghostty); the xterm path stays the
-// default and is untouched.
+// The ONLY terminal view: `_SessionTerminalBody` in terminal_screen.dart always
+// renders it. The xterm.dart `TerminalView` fallback and its backend setting
+// were removed in #1261; the xterm `Terminal` model still carries session I/O.
 //
 // Why flterm: libghostty-vt gives NATIVE touch long-press select + copy, which
 // xterm.dart v4 lacks (no selection-extend API — #582). This widget wires an

@@ -17,7 +17,6 @@ import '../state/detection_style_providers.dart';
 import '../state/feature_flags_providers.dart';
 import '../state/keepalive_providers.dart';
 import '../state/sessions.dart';
-import '../state/terminal_backend.dart';
 import '../state/tmux_control_mode_setting.dart';
 import '../state/ui_prefs_providers.dart';
 import 'detection_lab_screen.dart';
@@ -401,7 +400,6 @@ class SettingsResetButton extends ConsumerWidget {
 
     await ref.read(fontSizeProvider.notifier).set(fontSizeDefault);
     await ref.read(fontFamilyProvider.notifier).set(fontFamilyDefault);
-    await ref.read(terminalBackendProvider.notifier).set(terminalBackendDefault);
     await ref.read(keepaliveEnabledProvider.notifier).set(keepaliveEnabledDefault);
     await ref.read(tmuxControlModeProvider.notifier).set(tmuxControlModeDefault);
     // #1257: the experimental-settings flag resets with the rest.

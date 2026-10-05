@@ -21,7 +21,6 @@ regression — fix the code, not the test.
 ## Where gestures live
 
 - `native/lib/ui/ghostty_terminal_view.dart` — the terminal view and its gesture routing
-- `native/lib/ui/terminal_mouse_handler.dart` — touch → SGR mouse reports for tmux
 - `native/lib/ui/gutter_line_select_layer.dart`, `ghostty_gutter_layer.dart` — gutter selection and chips
 - `native/lib/diagnostics/gesture_trace.dart` — `gtrace(...)` ring buffer, logcat tag
   `[GESTURE]`, attached to every bug report
@@ -31,8 +30,7 @@ regression — fix the code, not the test.
 - `golden_flow_tui_test.dart`, `gutter_copy_scrollback_test.dart` — run by
   `scripts/terminal-flow-gate.sh`, REQUIRED before shipping any gesture-routing change.
   Gesture-model changes update these tests in the same commit.
-- `cc_gestures_test.dart`, `tmux_scrollback_test.dart`, `disconnected_scroll_test.dart`,
-  `gutter_track_scroll_993_test.dart`, `tmux_status_tap_sgr_test.dart` — scroll, tap
+- `cc_gestures_test.dart`, `gutter_track_scroll_993_test.dart`, `tmux_status_tap_sgr_test.dart` — scroll, tap
   and SGR paths
 
 Run a named subset over one emulator lease:

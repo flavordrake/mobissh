@@ -224,7 +224,8 @@ void main() {
       expect(result.keysImported, 1);
       expect(result.pinsAdded, 1);
       expect(result.pinsConflicting, 0);
-      expect(result.settingsApplied, 9);
+      // 8, not 9: the retired terminalBackend key (#1261) is ignored.
+      expect(result.settingsApplied, 8);
       expect(result.settingsSkipped, 0);
 
       // Profiles + trusted handles + commands/forwards (restoreCommands on).
@@ -295,7 +296,9 @@ void main() {
       expect(prefs.getDouble('mobissh.ui.fontSize'), 18.0);
       expect(prefs.getString('mobissh.ui.fontFamily'), 'FiraCode');
       expect(prefs.getInt('mobissh.ui.terminalThemeIndex'), 2);
-      expect(prefs.getString('mobissh.ui.terminalBackend'), 'xterm');
+      // #1261: the backend setting was removed; an older backup that still
+      // carries it restores cleanly and the key is ignored, not written.
+      expect(prefs.getString('mobissh.ui.terminalBackend'), isNull);
       expect(prefs.getBool('mobissh.ui.composeBarVisible'), isTrue);
       expect(prefs.getBool('mobissh.keepalive.enabled'), isTrue);
       expect(prefs.getBool('mobissh.ui.tmuxControlMode'), isTrue);
