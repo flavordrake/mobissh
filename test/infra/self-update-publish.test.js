@@ -218,7 +218,7 @@ function makeSandbox() {
   w('native/.flutter-version', `${FLUTTER_PIN}\n`);
   w('public/native-time.js', '//');
   w('public/native-feedback.js', '//');
-  w('home/.keep', '');
+  w('home/.mobissh/feedback.env', 'FEEDBACK_KEY=test-key\n'); // #1277: a keyless release is refused
   const git = (...a) => execFileSync('git', ['-C', root, ...a], { stdio: 'ignore' });
   git('init', '-q');
   git('add', '-A');

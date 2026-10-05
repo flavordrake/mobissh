@@ -96,7 +96,7 @@ describe('#1277 Dart lockfile enforcement', () => {
     w('native/pubspec.yaml', 'name: mobissh\nversion: 0.1.13-dev+200\n');
     w('native/.flutter-version', `${pin}\n`);
     w('key.properties', 'storeFile=x\n');
-    w('home/.keep', '');
+    w('home/.mobissh/feedback.env', 'FEEDBACK_KEY=test-key\n'); // #1277: a keyless release is refused
     const git = (...a) => execFileSync('git', ['-C', root, ...a], { stdio: 'ignore' });
     git('init', '-q');
     git('add', '-A');

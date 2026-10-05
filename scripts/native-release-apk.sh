@@ -87,21 +87,70 @@ if [[ "$APP_VERSION" != *+* || ! "$BUILD_NUMBER" =~ ^[0-9]+$ ]]; then
 fi
 
 # Feedback upload auth (#484/#1115): bake the shared X-MobiSSH-Key into the
-# build so bug reports keep working once prod fails closed. Same source the
-# AAB build uses (~/.mobissh/feedback.env, FEEDBACK_KEY=...). LOUD when
-# missing — a keyless build files no reports against a keyed server.
+# build so bug reports keep working once prod fails closed. The key is NOT a
+# confidential secret (it can be extracted from any APK), but it still never goes
+# on a command line or into a log (#1277): it reaches flutter only through
+# --dart-define-from-file. Sources, first match wins:
+#   MOBISSH_BUILD_INPUTS=<file.json>  {"MOBISSH_FEEDBACK_KEY": "..."} (homelab#44 builder)
+#   FEEDBACK_KEY in the environment, else ~/.mobissh/feedback.env (today's local ships)
+# Either way the inputs are re-staged as a 0600 JSON INSIDE native/, passed by a
+# relative path: the buildbox route snapshots the repo, so a /tmp path would not
+# exist there. Deleted after the build (EXIT trap covers failures).
+# A missing key FAILS CLOSED; MOBISSH_ALLOW_NO_FEEDBACK_KEY=1 opts out, -dev only.
 DEFINES=("--dart-define=MOBISSH_BUILD=${BUILD_NUMBER}")
 FEEDBACK_ENV="${HOME}/.mobissh/feedback.env"
-if [ -z "${FEEDBACK_KEY:-}" ] && [ -f "$FEEDBACK_ENV" ]; then
+BUILD_INPUTS="${MOBISSH_BUILD_INPUTS:-}"
+if [[ -z "$BUILD_INPUTS" && -z "${FEEDBACK_KEY:-}" && -f "$FEEDBACK_ENV" ]]; then
   # shellcheck disable=SC1090
   . "$FEEDBACK_ENV"
 fi
-if [ -n "${FEEDBACK_KEY:-}" ]; then
-  DEFINES+=("--dart-define=MOBISSH_FEEDBACK_KEY=${FEEDBACK_KEY}")
-  log "feedback key: set (${#FEEDBACK_KEY} chars)"
+# Exit 3 = no MOBISSH_FEEDBACK_KEY, 4 = unreadable inputs. Prints nothing: an
+# exception message could quote the file.
+STAGE_INPUTS_PY='
+import json, os, sys
+dest, src = sys.argv[1], sys.argv[2]
+if src:
+    try:
+        with open(src, encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        sys.exit(4)
+    if not isinstance(data, dict) or not all(
+            isinstance(v, (str, int, float, bool)) for v in data.values()):
+        sys.exit(4)
+else:
+    data = {"MOBISSH_FEEDBACK_KEY": os.environ.get("FEEDBACK_KEY", "")}
+key = data.get("MOBISSH_FEEDBACK_KEY")
+if not isinstance(key, str) or not key:
+    sys.exit(3)
+with open(dest, "w", encoding="utf-8") as f:
+    json.dump(data, f)
+'
+STAGED_INPUTS=""
+if [[ -n "$BUILD_INPUTS" || -n "${FEEDBACK_KEY:-}" ]]; then
+  STAGED_INPUTS="$(mktemp --suffix=.json "${NATIVE_DIR}/.build-inputs.XXXXXXXX")"   # mktemp creates it 0600
+  trap 'rm -f "$STAGED_INPUTS"' EXIT
+  stage_rc=0
+  FEEDBACK_KEY="${FEEDBACK_KEY:-}" python3 -c "$STAGE_INPUTS_PY" "$STAGED_INPUTS" "$BUILD_INPUTS" || stage_rc=$?
+  if [[ $stage_rc -eq 3 ]]; then
+    err "build inputs carry no MOBISSH_FEEDBACK_KEY (${BUILD_INPUTS:-$FEEDBACK_ENV}); refusing the release"
+    exit 2
+  elif [[ $stage_rc -ne 0 ]]; then
+    err "build inputs unreadable (${BUILD_INPUTS}): want a JSON object of string/number/bool values; refusing the release"
+    exit 2
+  fi
+  DEFINES+=("--dart-define-from-file=${STAGED_INPUTS##*/}")
+  log "feedback key: staged for --dart-define-from-file (value not logged)"
+elif [[ "${MOBISSH_ALLOW_NO_FEEDBACK_KEY:-}" == 1 && "$APP_VERSION" == *-dev+* ]]; then
+  err "WARNING: building WITHOUT a feedback key (MOBISSH_ALLOW_NO_FEEDBACK_KEY=1, -dev build):"
+  err "  bug reports from this build are rejected by prod (#1115)."
 else
-  err "WARNING: no FEEDBACK_KEY (${FEEDBACK_ENV} missing) — bug reports from"
-  err "  this build will be REJECTED once prod enforces upload auth (#1115)."
+  err "no feedback key: set MOBISSH_BUILD_INPUTS or provide ${FEEDBACK_ENV} (FEEDBACK_KEY=...)."
+  if [[ "${MOBISSH_ALLOW_NO_FEEDBACK_KEY:-}" == 1 ]]; then
+    err "  MOBISSH_ALLOW_NO_FEEDBACK_KEY applies to -dev builds only, not ${APP_VERSION}."
+  fi
+  err "  A keyless build cannot file bug reports against prod (#1115). Refusing the release."
+  exit 2
 fi
 
 # #1277: the release is built with the Flutter SDK pinned in native/.flutter-version
@@ -137,6 +186,7 @@ if ! "${REPO_ROOT}/scripts/flutter-cmd.sh" --in "$NATIVE_DIR" build apk --releas
   err "flutter build apk --release --split-per-abi failed"
   exit 2
 fi
+if [[ -n "$STAGED_INPUTS" ]]; then rm -f "$STAGED_INPUTS"; fi
 
 if [[ ! -f "$BUILT_APK" ]]; then
   err "expected arm64 APK not found at $BUILT_APK"
