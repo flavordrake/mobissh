@@ -29,6 +29,26 @@
 # Source it from a runner:
 #   source "$(dirname "$0")/lib/integration-fixtures.sh"
 
+# Is the leased device still there? Called after a FAILED test: a device that
+# dropped mid-run makes every later test fail in seconds ("no online device"),
+# which reads as regressions and holds the shared lease on a dead device
+# (2026-10-05). A few spaced probes ride out an adb blip; then it is LOST.
+integration_device_online() {
+  local probes="${INTEGRATION_DEVICE_PROBES:-5}" pause="${INTEGRATION_DEVICE_PROBE_SLEEP:-3}" i
+  for (( i = 1; i <= probes; i++ )); do
+    if [[ "${ADB_MODE:-}" == connect ]]; then
+      adb connect "${EMU_ADBD_ENDPOINT:-}" >/dev/null 2>&1 || true
+      if adb -s "${EMU_ADBD_ENDPOINT:-}" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' | grep -q 1; then
+        return 0
+      fi
+    elif [[ "$(adb get-state 2>/dev/null)" == device ]]; then
+      return 0
+    fi
+    (( i < probes )) && sleep "$pause"
+  done
+  return 1
+}
+
 # Absolute path of an integration test named either way the runners name them:
 # `integration_test/foo_test.dart` (relative to native/) or an absolute path.
 integration_test_path() {
@@ -130,13 +150,22 @@ integration_run_one() {
     fi
   done
 
+  # A test that HANGS never returns, so the runner's post-failure device probe
+  # never runs and the shared lease is held until it expires (homelab #47). Bound
+  # each test; a timeout is a FAILED test. 20 min is far above the slowest test.
+  local limit="${INTEGRATION_TEST_TIMEOUT:-1200}" grace="${INTEGRATION_TEST_KILL_AFTER:-30}" trc=0
   if [[ "$rc" -eq 0 ]]; then
+    # `|| trc=$?`, not a bare call: the runners run under `set -e`.
     if integration_needs_second_bridge "$abs"; then
       echo "> (enabling 2nd bridge port 2223 — the test declares 127.0.0.1:2223)"
-      BRIDGE_PORT2="2223" "${root}/scripts/native-connect-test.sh" "$t" || rc=1
+      BRIDGE_PORT2="2223" timeout --kill-after="$grace" "$limit" "${root}/scripts/native-connect-test.sh" "$t" || trc=$?
     else
-      "${root}/scripts/native-connect-test.sh" "$t" || rc=1
+      timeout --kill-after="$grace" "$limit" "${root}/scripts/native-connect-test.sh" "$t" || trc=$?
     fi
+    if [[ "$trc" -eq 124 || "$trc" -eq 137 ]]; then
+      echo "! ${t} TIMED OUT after ${limit}s — counted as FAILED" >&2
+    fi
+    [[ "$trc" -eq 0 ]] || rc=1
   fi
 
   # TEARDOWN ALWAYS, including after a failure. cc-nested-setup.sh installs a

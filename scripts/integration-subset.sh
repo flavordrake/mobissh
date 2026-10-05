@@ -51,6 +51,10 @@ for t in "$@"; do
     passed+=("$t"); log "PASS $t"
   else
     failed+=("$t"); log "FAIL $t"
+    if ! integration_device_online; then
+      log "DEVICE LOST after $t — NOT VALIDATED: stopping so the lease is released; $t and the rest need a rerun"
+      exit 3
+    fi
   fi
 done
 

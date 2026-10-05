@@ -139,7 +139,16 @@ for abs in "${TESTS[@]}"; do
   # Bridge, jump target, and the declared setup/teardown bracket all live in
   # scripts/lib/integration-fixtures.sh so this runner and integration-subset.sh
   # cannot wire the same test up two different ways (#1101 G1/G3).
-  if integration_run_one "$rel"; then PASS+=("$rel"); else FAIL+=("$rel"); fi
+  if integration_run_one "$rel"; then
+    PASS+=("$rel")
+  else
+    FAIL+=("$rel")
+    if ! integration_device_online; then
+      err "DEVICE LOST after $rel — $(( ${#TESTS[@]} - ${#PASS[@]} - ${#FAIL[@]} - ${#SKIP[@]} )) tests not run"
+      err "NOT VALIDATED: stopping so the lease is released; $rel and the rest need a rerun"
+      exit 3
+    fi
+  fi
 done
 
 echo "> INTEGRATION SUITE RESULT: ${#PASS[@]} passed, ${#FAIL[@]} failed, ${#SKIP[@]} run elsewhere (of ${#TESTS[@]})"
