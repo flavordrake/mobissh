@@ -102,7 +102,7 @@ void main() {
       // Screen readers announce the tooltip; it lands on the button's node.
       expect(
         tester.getSemantics(find.byKey(_newKey)),
-        containsSemantics(tooltip: 'New connection', isButton: true),
+        isSemantics(tooltip: 'New connection', isButton: true),
       );
       semantics.dispose();
     });
