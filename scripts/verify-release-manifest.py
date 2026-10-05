@@ -8,8 +8,9 @@ them when the fixtures land. NOT wired into ship-native.sh yet.
 Checks, in order (the first failure exits 1; nothing is ever written or published):
   1. a detached signature over the raw manifest bytes verifies with the provenance key
   2. the manifest is a JSON object with no duplicate keys
-  3. project, full 40-hex source_sha and job_id equal the expected values; issued_at
-     is recent (not stale, not in the future)
+  3. project, full 40-hex source_sha, job_id and the integer build_number
+     (MOBISSH_BUILD) equal the expected values; issued_at is recent (not stale,
+     not in the future)
   4. the manifest names exactly the three --split-per-abi release APKs
   5. the artifact directory holds exactly those names, each a regular file (lstat:
      no symlinks, FIFOs, devices or directories), each matching its sha256
@@ -17,7 +18,8 @@ Checks, in order (the first failure exits 1; nothing is ever written or publishe
 
 Draft manifest (UTF-8 JSON):
   {"schema": "mobissh-release-manifest/draft-1", "project": "flavordrake/mobissh",
-   "source_sha": "<40 hex>", "job_id": "<id>", "issued_at": "<ISO-8601 UTC>",
+   "source_sha": "<40 hex>", "job_id": "<id>", "build_number": <int B>,
+   "issued_at": "<ISO-8601 UTC>",
    "artifacts": {"app-arm64-v8a-release.apk": "<sha256 hex>", ...}}
 
 Exit: 0 verified, 1 refused, 2 usage.
@@ -105,6 +107,12 @@ def check_identity(m, args):
         raise Refused(f"project {m.get('project')!r} != expected {args.expected_project}")
     if m.get("job_id") != args.expected_job:
         raise Refused(f"job_id {m.get('job_id')!r} != expected {args.expected_job}")
+    if not re.fullmatch(r"[0-9]+", args.expected_build):
+        raise Refused(f"expected build must be a non-negative integer, got {args.expected_build!r}")
+    build = m.get("build_number")
+    # type() not isinstance(): JSON true would pass isinstance(bool, int).
+    if type(build) is not int or build != int(args.expected_build):
+        raise Refused(f"build_number {build!r} != expected {args.expected_build}")
     issued = m.get("issued_at")
     try:
         t = datetime.datetime.fromisoformat(str(issued).replace("Z", "+00:00"))
@@ -175,6 +183,7 @@ def main():
     ap.add_argument("--expected-sha", required=True)
     ap.add_argument("--expected-project", default="flavordrake/mobissh")
     ap.add_argument("--expected-job", required=True)
+    ap.add_argument("--expected-build", required=True, help="MOBISSH_BUILD, the build ordinal B")
     ap.add_argument("--artifacts", required=True, help="directory holding exactly the release APKs")
     ap.add_argument("--max-age-seconds", type=int, default=86400)
     ap.add_argument("--expected-cert-sha256", default=PINNED_CERT_SHA256,
@@ -191,7 +200,7 @@ def main():
     except Refused as e:
         print(f"REFUSED: {e}", file=sys.stderr)
         return 1
-    print(f"VERIFIED {args.expected_project}@{args.expected_sha} job {args.expected_job}")
+    print(f"VERIFIED {args.expected_project}@{args.expected_sha} build {args.expected_build} job {args.expected_job}")
     return 0
 
 

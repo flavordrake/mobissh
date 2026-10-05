@@ -23,6 +23,7 @@ const REPO_ROOT = path.resolve(__dirname, '../..');
 const VERIFY = path.join(REPO_ROOT, 'scripts/verify-release-manifest.py');
 const SHA = 'a'.repeat(40);
 const JOB = 'job-1277-test';
+const BUILD = 202; // MOBISSH_BUILD, the global build ordinal B
 const PROJECT = 'flavordrake/mobissh';
 const APKS = ['app-armeabi-v7a-release.apk', 'app-arm64-v8a-release.apk', 'app-x86_64-release.apk'];
 
@@ -107,6 +108,7 @@ function makeRelease(over = {}) {
     project: PROJECT,
     source_sha: SHA,
     job_id: JOB,
+    build_number: BUILD,
     issued_at: new Date().toISOString(),
     artifacts,
     ...over,
@@ -137,6 +139,7 @@ function verify(rel, extra = {}) {
     '--expected-sha': SHA,
     '--expected-project': PROJECT,
     '--expected-job': JOB,
+    '--expected-build': String(BUILD),
     '--artifacts': rel.art,
     '--apksigner': APKSIGNER || '/nonexistent/apksigner',
     '--expected-cert-sha256': FIX.certSha || '0'.repeat(64),
@@ -196,6 +199,18 @@ describe('#1277 verify-release-manifest.py (DRAFT pending homelab#44)', () => {
     it('refuses a job issued in the future', () => {
       const future = new Date(Date.now() + 3600 * 1000).toISOString();
       refused(verify(makeRelease({ issued_at: future })), /issued_at/);
+    });
+    it('refuses a build_number mismatch', () => {
+      refused(verify(makeRelease({ build_number: BUILD + 1 })), /build_number/);
+    });
+    it('refuses a missing build_number', () => {
+      refused(verify(makeRelease({ build_number: undefined })), /build_number/);
+    });
+    it('refuses a build_number that is not an integer', () => {
+      refused(verify(makeRelease({ build_number: String(BUILD) })), /build_number/);
+    });
+    it('refuses a non-integer expected build', () => {
+      refused(verify(makeRelease(), { '--expected-build': 'x' }), /build/);
     });
     it('refuses a missing issued_at', () => {
       refused(verify(makeRelease({ issued_at: undefined })), /issued_at/);
