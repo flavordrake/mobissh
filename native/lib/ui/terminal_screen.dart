@@ -218,6 +218,13 @@ class TerminalScreen extends ConsumerWidget {
                     (keybarVisible ? kKeybarReserve : 0),
                 onClose: () =>
                     ref.read(composeBarVisibleProvider.notifier).set(false),
+                // #1229: the same gate the terminal input path applies
+                // (sessions.dart onOutput), plus the task's no-shell report.
+                isLive: () {
+                  final d = activeEntry.proxy.data;
+                  return d.state == SshSessionState.connected &&
+                      !d.inputNotSent;
+                },
               ),
           ],
         ),

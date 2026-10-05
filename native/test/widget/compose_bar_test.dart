@@ -37,8 +37,10 @@ void main() {
     VoidCallback? onClose,
     String sessionId = 'sess',
     ProviderContainer? container,
+    Terminal? terminal,
+    bool Function()? isLive,
   }) async {
-    final terminal = Terminal();
+    terminal ??= Terminal();
     terminal.onOutput = sink.add;
     final c = container ?? ProviderContainer();
     if (container == null) addTearDown(c.dispose);
@@ -55,6 +57,7 @@ void main() {
                   terminal: terminal,
                   sessionId: sessionId,
                   onClose: onClose ?? () {},
+                  isLive: isLive ?? () => true,
                 ),
               ],
             ),
@@ -113,9 +116,13 @@ void main() {
       expect(sink.join(), 'the quick brown fox');
     });
 
-    testWidgets('multi-line commit is bracketed-paste wrapped', (tester) async {
+    testWidgets(
+        'multi-line commit is bracketed-paste wrapped when the remote enabled '
+        'DECSET 2004', (tester) async {
       final sink = <String>[];
-      await pumpBar(tester, sink);
+      final terminal = Terminal();
+      terminal.write('\x1b[?2004h'); // the remote turned bracketed paste on
+      await pumpBar(tester, sink, terminal: terminal);
 
       await tester.enterText(
         find.byKey(const Key('compose-bar-input')),
@@ -126,6 +133,100 @@ void main() {
       await tester.pump();
 
       expect(sink.join(), '\x1b[200~line1\nline2\x1b[201~');
+    });
+
+    testWidgets(
+        '#1229: multi-line commit is NOT wrapped when 2004 is off — markers '
+        'would arrive as literal junk', (tester) async {
+      final sink = <String>[];
+      final terminal = Terminal();
+      terminal.write('\x1b[?2004h\x1b[?2004l'); // enabled, then disabled
+      await pumpBar(tester, sink, terminal: terminal);
+
+      await tester.enterText(
+        find.byKey(const Key('compose-bar-input')),
+        'line1\nline2',
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('compose-bar-commit')));
+      await tester.pump();
+
+      expect(sink.join(), 'line1\nline2');
+    });
+  });
+
+  group('#1229 send while not live keeps the text', () {
+    testWidgets(
+        'submit while not live sends nothing, keeps the text, stays open and '
+        'shows the not-sent indicator', (tester) async {
+      final sink = <String>[];
+      var closed = 0;
+      await pumpBar(
+        tester,
+        sink,
+        isLive: () => false,
+        onClose: () => closed++,
+      );
+
+      await tester.enterText(
+        find.byKey(const Key('compose-bar-input')),
+        'secret text',
+      );
+      await tester.pump();
+      expect(find.byKey(const Key('compose-bar-not-sent')), findsNothing);
+      await tester.tap(find.byKey(const Key('compose-bar-submit')));
+      await tester.pump();
+
+      expect(sink, isEmpty);
+      expect(closed, 0, reason: 'the panel must stay open with the text');
+      final field = tester.widget<TextField>(
+        find.byKey(const Key('compose-bar-input')),
+      );
+      expect(field.controller!.text, 'secret text');
+      expect(find.byKey(const Key('compose-bar-not-sent')), findsOneWidget);
+    });
+
+    testWidgets('commit while not live keeps the text and records no history',
+        (tester) async {
+      final sink = <String>[];
+      final c = await pumpBar(tester, sink, isLive: () => false);
+
+      await tester.enterText(
+        find.byKey(const Key('compose-bar-input')),
+        'ls',
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('compose-bar-commit')));
+      await tester.pump();
+
+      expect(sink, isEmpty);
+      expect(c.read(composeHistoryProvider)['sess'] ?? const [], isEmpty);
+      final field = tester.widget<TextField>(
+        find.byKey(const Key('compose-bar-input')),
+      );
+      expect(field.controller!.text, 'ls');
+    });
+
+    testWidgets('once live again, the kept text sends and the indicator clears',
+        (tester) async {
+      final sink = <String>[];
+      var live = false;
+      await pumpBar(tester, sink, isLive: () => live);
+
+      await tester.enterText(
+        find.byKey(const Key('compose-bar-input')),
+        'echo hi',
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('compose-bar-submit')));
+      await tester.pump();
+      expect(sink, isEmpty);
+
+      live = true;
+      await tester.tap(find.byKey(const Key('compose-bar-submit')));
+      await tester.pump();
+      expect(sink.join(), 'echo hi\r');
+      expect(find.byKey(const Key('compose-bar-not-sent')), findsNothing);
     });
 
     testWidgets('submit with empty field still sends Enter', (tester) async {

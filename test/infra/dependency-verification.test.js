@@ -82,17 +82,21 @@ describe('#1277 Dart lockfile enforcement', () => {
       if (mode) fs.chmodSync(p, mode);
     };
     w('scripts/native-release-apk.sh', fs.readFileSync(RELEASE), 0o755);
-    // Stub: logs each call; `pub get` fails as a hash mismatch would.
+    // Stub: reports the pinned SDK for --version (#1277 toolchain check, not
+    // logged), logs every other call; `pub get` fails as a hash mismatch would.
+    const pin = fs.readFileSync(path.join(REPO_ROOT, 'native/.flutter-version'), 'utf8').trim();
     w('scripts/flutter-cmd.sh', [
       '#!/usr/bin/env bash',
+      `if [[ "$1" == --version ]]; then echo '"frameworkVersion": "${pin}"'; exit 0; fi`,
       'ROOT="$(cd "$(dirname "$0")/.." && pwd)"',
       'echo "$*" >> "$ROOT/flutter-calls.txt"',
       'if [[ "$3" == pub ]]; then exit 65; fi',
       '',
     ].join('\n'), 0o755);
     w('native/pubspec.yaml', 'name: mobissh\nversion: 0.1.13-dev+200\n');
+    w('native/.flutter-version', `${pin}\n`);
     w('key.properties', 'storeFile=x\n');
-    w('home/.keep', '');
+    w('home/.mobissh/feedback.env', 'FEEDBACK_KEY=test-key\n'); // #1277: a keyless release is refused
     const git = (...a) => execFileSync('git', ['-C', root, ...a], { stdio: 'ignore' });
     git('init', '-q');
     git('add', '-A');

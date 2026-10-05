@@ -4,7 +4,8 @@
 # Captures the recurring delivery ritual (memory: feedback_apk_timestamp):
 #   1. flutter build apk --release (signed with the release keystore — see
 #      memory native-android-signing; REFUSES to build if key.properties is
-#      missing, #1215), with --dart-define=MOBISSH_BUILD=<B>.
+#      missing, #1215), with --dart-define=MOBISSH_BUILD=<B>. REFUSES when the
+#      active Flutter is not the one pinned in native/.flutter-version (#1277).
 #   2. Copy to public/mobissh-native-<ISO-8601-ts>.apk AND the stable
 #      public/mobissh-native.apk alias.
 #   3. docker cp BOTH into mobissh-prod:/app/public/ so the running container
@@ -24,14 +25,14 @@ mkdir -p "$MOBISSH_TMPDIR" "$MOBISSH_LOGDIR"
 LOGFILE="${MOBISSH_LOGDIR}/native-release-apk.log"
 exec > >(tee -a "$LOGFILE") 2>&1
 
-# #1215 R4: refuse to build without the release keystore. Gradle silently falls
-# back to the DEBUG keystore when key.properties is missing; a debug-signed APK
-# can never upgrade an installed release copy and the in-app updater refuses it
+# #1215 R4: refuse to build without the release keystore. Without key.properties
+# gradle emits an UNSIGNED release (#1277; it used to be DEBUG-signed), which can
+# never upgrade an installed release copy and the in-app updater refuses it
 # (signing-cert match, docs/self-update.md R10). Same path gradle reads.
 KEY_PROPS="${MOBISSH_KEY_PROPERTIES:-/home/dev/.mobissh-android/key.properties}"
 if [[ ! -f "$KEY_PROPS" ]]; then
   echo "! FATAL: release keystore config missing (${KEY_PROPS})." >&2
-  echo "  Without it the APK is DEBUG-signed and cannot upgrade installed copies. Aborting." >&2
+  echo "  Without it the APK is unsigned and cannot upgrade installed copies. Aborting." >&2
   exit 2
 fi
 echo "> release keystore config: ${KEY_PROPS}"
@@ -86,22 +87,88 @@ if [[ "$APP_VERSION" != *+* || ! "$BUILD_NUMBER" =~ ^[0-9]+$ ]]; then
 fi
 
 # Feedback upload auth (#484/#1115): bake the shared X-MobiSSH-Key into the
-# build so bug reports keep working once prod fails closed. Same source the
-# AAB build uses (~/.mobissh/feedback.env, FEEDBACK_KEY=...). LOUD when
-# missing — a keyless build files no reports against a keyed server.
+# build so bug reports keep working once prod fails closed. The key is NOT a
+# confidential secret (it can be extracted from any APK), but it still never goes
+# on a command line or into a log (#1277): it reaches flutter only through
+# --dart-define-from-file. Sources, first match wins:
+#   MOBISSH_BUILD_INPUTS=<file.json>  {"MOBISSH_FEEDBACK_KEY": "..."} (homelab#44 builder)
+#   FEEDBACK_KEY in the environment, else ~/.mobissh/feedback.env (today's local ships)
+# Either way the inputs are re-staged as a 0600 JSON INSIDE native/, passed by a
+# relative path: the buildbox route snapshots the repo, so a /tmp path would not
+# exist there. Deleted after the build (EXIT trap covers failures).
+# A missing key FAILS CLOSED; MOBISSH_ALLOW_NO_FEEDBACK_KEY=1 opts out, -dev only.
 DEFINES=("--dart-define=MOBISSH_BUILD=${BUILD_NUMBER}")
 FEEDBACK_ENV="${HOME}/.mobissh/feedback.env"
-if [ -z "${FEEDBACK_KEY:-}" ] && [ -f "$FEEDBACK_ENV" ]; then
+BUILD_INPUTS="${MOBISSH_BUILD_INPUTS:-}"
+if [[ -z "$BUILD_INPUTS" && -z "${FEEDBACK_KEY:-}" && -f "$FEEDBACK_ENV" ]]; then
   # shellcheck disable=SC1090
   . "$FEEDBACK_ENV"
 fi
-if [ -n "${FEEDBACK_KEY:-}" ]; then
-  DEFINES+=("--dart-define=MOBISSH_FEEDBACK_KEY=${FEEDBACK_KEY}")
-  log "feedback key: set (${#FEEDBACK_KEY} chars)"
+# Exit 3 = no MOBISSH_FEEDBACK_KEY, 4 = unreadable inputs. Prints nothing: an
+# exception message could quote the file.
+STAGE_INPUTS_PY='
+import json, os, sys
+dest, src = sys.argv[1], sys.argv[2]
+if src:
+    try:
+        with open(src, encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        sys.exit(4)
+    if not isinstance(data, dict) or not all(
+            isinstance(v, (str, int, float, bool)) for v in data.values()):
+        sys.exit(4)
+else:
+    data = {"MOBISSH_FEEDBACK_KEY": os.environ.get("FEEDBACK_KEY", "")}
+key = data.get("MOBISSH_FEEDBACK_KEY")
+if not isinstance(key, str) or not key:
+    sys.exit(3)
+with open(dest, "w", encoding="utf-8") as f:
+    json.dump(data, f)
+'
+STAGED_INPUTS=""
+if [[ -n "$BUILD_INPUTS" || -n "${FEEDBACK_KEY:-}" ]]; then
+  STAGED_INPUTS="$(mktemp --suffix=.json "${NATIVE_DIR}/.build-inputs.XXXXXXXX")"   # mktemp creates it 0600
+  trap 'rm -f "$STAGED_INPUTS"' EXIT
+  stage_rc=0
+  FEEDBACK_KEY="${FEEDBACK_KEY:-}" python3 -c "$STAGE_INPUTS_PY" "$STAGED_INPUTS" "$BUILD_INPUTS" || stage_rc=$?
+  if [[ $stage_rc -eq 3 ]]; then
+    err "build inputs carry no MOBISSH_FEEDBACK_KEY (${BUILD_INPUTS:-$FEEDBACK_ENV}); refusing the release"
+    exit 2
+  elif [[ $stage_rc -ne 0 ]]; then
+    err "build inputs unreadable (${BUILD_INPUTS}): want a JSON object of string/number/bool values; refusing the release"
+    exit 2
+  fi
+  DEFINES+=("--dart-define-from-file=${STAGED_INPUTS##*/}")
+  log "feedback key: staged for --dart-define-from-file (value not logged)"
+elif [[ "${MOBISSH_ALLOW_NO_FEEDBACK_KEY:-}" == 1 && "$APP_VERSION" == *-dev+* ]]; then
+  err "WARNING: building WITHOUT a feedback key (MOBISSH_ALLOW_NO_FEEDBACK_KEY=1, -dev build):"
+  err "  bug reports from this build are rejected by prod (#1115)."
 else
-  err "WARNING: no FEEDBACK_KEY (${FEEDBACK_ENV} missing) — bug reports from"
-  err "  this build will be REJECTED once prod enforces upload auth (#1115)."
+  err "no feedback key: set MOBISSH_BUILD_INPUTS or provide ${FEEDBACK_ENV} (FEEDBACK_KEY=...)."
+  if [[ "${MOBISSH_ALLOW_NO_FEEDBACK_KEY:-}" == 1 ]]; then
+    err "  MOBISSH_ALLOW_NO_FEEDBACK_KEY applies to -dev builds only, not ${APP_VERSION}."
+  fi
+  err "  A keyless build cannot file bug reports against prod (#1115). Refusing the release."
+  exit 2
 fi
+
+# #1277: the release is built with the Flutter SDK pinned in native/.flutter-version
+# and nothing else. `--version` is not routed to the buildbox, so this checks the
+# fd-dev SDK; the buildbox image pins its own (3.44.0 today) and the isolated
+# builder (homelab#44) is expected to read this same file.
+FLUTTER_PIN_FILE="${NATIVE_DIR}/.flutter-version"
+if [[ ! -f "$FLUTTER_PIN_FILE" ]]; then
+  err "pinned Flutter version missing (${FLUTTER_PIN_FILE}); refusing an unpinned release"
+  exit 2
+fi
+FLUTTER_PIN="$(tr -d '[:space:]' < "$FLUTTER_PIN_FILE")"
+FLUTTER_ACTIVE="$("${REPO_ROOT}/scripts/flutter-cmd.sh" --version --machine | sed -n 's/.*"frameworkVersion": *"\([^"]*\)".*/\1/p' | head -1 || true)"
+if [[ -z "$FLUTTER_PIN" || "$FLUTTER_ACTIVE" != "$FLUTTER_PIN" ]]; then
+  err "active Flutter ${FLUTTER_ACTIVE:-<unknown>} != pinned ${FLUTTER_PIN:-<empty>} (native/.flutter-version); refusing the release"
+  exit 2
+fi
+log "flutter ${FLUTTER_ACTIVE} matches native/.flutter-version"
 
 # #1277: the release must resolve exactly the hashes pinned in pubspec.lock.
 # `--enforce-lockfile` refuses a lockfile that pubspec.yaml no longer matches and
@@ -119,6 +186,7 @@ if ! "${REPO_ROOT}/scripts/flutter-cmd.sh" --in "$NATIVE_DIR" build apk --releas
   err "flutter build apk --release --split-per-abi failed"
   exit 2
 fi
+if [[ -n "$STAGED_INPUTS" ]]; then rm -f "$STAGED_INPUTS"; fi
 
 if [[ ! -f "$BUILT_APK" ]]; then
   err "expected arm64 APK not found at $BUILT_APK"

@@ -28,6 +28,9 @@ const GEN = path.join(REPO_ROOT, 'scripts/gen-android-latest-json.sh');
 const RELEASE = path.join(REPO_ROOT, 'scripts/native-release-apk.sh');
 const HOST = 'https://mobissh.tailbe5094.ts.net';
 const VERSION = '0.1.12-rc.4+191';
+// #1277: the release script refuses unless the stub reports the pinned SDK.
+const FLUTTER_PIN = fs.readFileSync(path.join(REPO_ROOT, 'native/.flutter-version'), 'utf8').trim();
+const VERSION_STUB = `if [[ "$1" == --version ]]; then echo '"frameworkVersion": "${FLUTTER_PIN}"'; exit 0; fi`;
 
 function sha256(file) {
   return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
@@ -200,6 +203,7 @@ function makeSandbox() {
   if (fs.existsSync(top)) w('scripts/release-notes-top.sh', fs.readFileSync(top), 0o755);
   w('scripts/flutter-cmd.sh', [
     '#!/usr/bin/env bash',
+    VERSION_STUB,
     'ROOT="$(cd "$(dirname "$0")/.." && pwd)"',
     'printf "%s\\n" "$@" > "$ROOT/flutter-args.txt"',
     'OUT="$ROOT/native/build/app/outputs/flutter-apk"',
@@ -211,9 +215,10 @@ function makeSandbox() {
     '#!/usr/bin/env bash\nROOT="$(cd "$(dirname "$0")/.." && pwd)"\necho page > "$ROOT/public/native.html"\n', 0o755);
   w('scripts/notify-build.sh', '#!/usr/bin/env bash\nexit 0\n', 0o755);
   w('native/pubspec.yaml', `name: mobissh\nversion: ${VERSION}\n`);
+  w('native/.flutter-version', `${FLUTTER_PIN}\n`);
   w('public/native-time.js', '//');
   w('public/native-feedback.js', '//');
-  w('home/.keep', '');
+  w('home/.mobissh/feedback.env', 'FEEDBACK_KEY=test-key\n'); // #1277: a keyless release is refused
   const git = (...a) => execFileSync('git', ['-C', root, ...a], { stdio: 'ignore' });
   git('init', '-q');
   git('add', '-A');
@@ -284,6 +289,7 @@ describe('#1271 native-release-apk.sh refuses symlinked build outputs', () => {
   function plantStub(root, apkName) {
     fs.writeFileSync(path.join(root, 'scripts/flutter-cmd.sh'), [
       '#!/usr/bin/env bash',
+      VERSION_STUB,
       'ROOT="$(cd "$(dirname "$0")/.." && pwd)"',
       'OUT="$ROOT/native/build/app/outputs/flutter-apk"',
       'mkdir -p "$OUT"',

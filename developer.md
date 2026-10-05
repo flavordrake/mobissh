@@ -40,6 +40,8 @@ Compile-time defines, all read with `String/bool.fromEnvironment`:
 | `MOBISSH_UPDATE_MANIFEST_URL` | tailnet `/android-latest.json` | nothing |
 | `MOBISSH_RAW_DIAGNOSTICS` | false | nothing |
 
+`scripts/native-release-apk.sh` passes the feedback key through `--dart-define-from-file`, never as `--dart-define` on a command line, and never logs it. It takes the key from `MOBISSH_BUILD_INPUTS` (a JSON file such as `{"MOBISSH_FEEDBACK_KEY": "..."}`), or else from `FEEDBACK_KEY` in the environment or `~/.mobissh/feedback.env`. It copies the inputs to a private (0600) JSON file inside `native/`, because the buildbox only receives the repo snapshot, and deletes that file after the build. A release with no key is refused. `MOBISSH_ALLOW_NO_FEEDBACK_KEY=1` lets a `-dev` build go out without one, and never an rc or final build. The key is compiled into the app, so anyone with the APK can extract it. It is a shared upload key, not a confidential secret: it keeps random posts off the bug-report endpoint and does not prove who sent a report.
+
 ## The companion server
 
 `server/index.js` serves:
@@ -103,6 +105,9 @@ Every Flutter call goes through `scripts/flutter-cmd.sh`. On a host with the fle
 
 Release builds compile only dependencies whose hashes are committed (#1277): the shared buildbox caches are not trusted, so a poisoned cached package must fail the build rather than be signed and shipped.
 
+- Toolchain: `native/.flutter-version` pins the Flutter SDK. CI installs that version, and `scripts/native-release-apk.sh` refuses a release when the active SDK differs. A release build without `key.properties` comes out unsigned, never debug-signed.
+- Canary: `flutter build apk --android-project-arg=mobissh.canary=true` builds `com.flavordrake.mobissh.canary`, labelled "MobiSSH Canary", for the homelab#44 joint canary. It installs beside the real app, never over it, and it never takes the production signing config. Default builds are unchanged.
+- Provenance (draft, pending homelab#44): `scripts/verify-release-manifest.py` checks a builder+signer manifest (detached Ed25519 signature, source SHA, project, job, the exact artifact set, hashes and the pinned signing cert). It is not wired into the ship path yet.
 - Dart: every hosted package in `native/pubspec.lock` carries a sha256. `scripts/native-release-apk.sh` runs `flutter pub get --enforce-lockfile` before the release build and stops if the lock is stale or a hash differs.
 - Gradle: `native/android/gradle/verification-metadata.xml` pins a sha256 for every artifact the Android build resolves, including the Flutter Gradle plugin's own build and the Flutter engine artifacts. `native/android/gradle.properties` sets `org.gradle.dependency.verification=strict`, so an artifact that is missing from the file or has a different hash fails the build.
 
@@ -138,7 +143,7 @@ Then run a debug `scripts/flutter-cmd.sh --in native build apk --debug`. The `he
 Test infrastructure:
 
 - Test SSH server: `docker-compose.test.yml` (`testuser`/`testpass`, ed25519 key in `docker/test-sshd/`, tmux with `mouse on`), started by `scripts/test-sshd-up.sh` and `scripts/lib/testsshd-fixture.sh`; `scripts/testsshd-tailnet-bridge.sh` exposes it to tailnet peers.
-- Emulator: the fleet emulator is leased with `scripts/with-fleet-emulator.sh`; `scripts/emu-container-ctl.sh` drives the dedicated emulator container; `scripts/emulator-ctl.sh` and `scripts/emulator-maintain.sh` manage a local always-on AVD (`scripts/setup-avd.sh`). `scripts/native-connect-test.sh` runs one test on the device; `scripts/emu-shot.sh` and `scripts/emu-log.sh` grab a screenshot or logcat; `scripts/ci-reap.sh` sweeps orphaned test infrastructure.
+- Emulator: the fleet emulator is leased with `scripts/with-fleet-emulator.sh`; `scripts/emu-container-ctl.sh` drives the dedicated emulator container; `scripts/emulator-ctl.sh` and `scripts/emulator-maintain.sh` manage a local always-on AVD (`scripts/setup-avd.sh`). `scripts/native-connect-test.sh` runs one test on the device; `scripts/emu-shot.sh` and `scripts/emu-log.sh` grab a screenshot or logcat; `scripts/demo-gif.sh` turns an `adb shell screenrecord` clip into a small looping GIF for the README media in `docs/media/`; `scripts/ci-reap.sh` sweeps orphaned test infrastructure.
 - Fixtures named by test headers: `scripts/cc-attach-setup.sh`, `scripts/cc-capture-setup.sh`, `scripts/cc-exec-switch-setup.sh`, `scripts/cc-scroll-setup.sh`, `scripts/cc-nested-setup.sh` and `scripts/cc-nested-teardown.sh` (tmux control mode), `scripts/deep-link-window-1211-setup.sh`, `scripts/deep-link-acceptance.sh`, `scripts/self-update-1216-setup.sh` and `scripts/self-update-1216-teardown.sh` (with `scripts/gen-self-update-fixture-apks.sh`), `scripts/sftp-bytes-1225-setup.sh` and `scripts/sftp-bytes-1225-teardown.sh` (with `scripts/lib/sftp-cap-proxy.sh`), `scripts/run-kbrace-repro.sh`.
 - Diagnostics for terminal work: `scripts/tmux-state-trace.sh` (the real tmux server's state), `scripts/capture-terminal-corpus.sh` and `scripts/capture-tmux-cc.sh` (fixture capture), `scripts/validate-cc-parser.sh` (control-mode parser check), `scripts/native-fork-test.sh` (flterm's own suite), `scripts/vendor-mermaid.sh` (the offline Mermaid bundle).
 

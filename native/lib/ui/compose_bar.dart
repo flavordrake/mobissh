@@ -38,12 +38,6 @@ import '../state/compose_sink_provider.dart';
 import '../state/lifecycle_providers.dart';
 import '../util/terminal_copy_fixup.dart';
 
-/// Bracketed-paste wrappers (#599): a multi-line commit is wrapped so the
-/// remote TUI/shell treats it as a single paste rather than running each
-/// embedded newline as Enter. Mirrors the PWA's `\x1b[200~...\x1b[201~`.
-const String _bracketedPasteStart = '\x1b[200~';
-const String _bracketedPasteEnd = '\x1b[201~';
-
 /// A floating, draggable compose panel bound to the active session's
 /// [terminal]. Nothing reaches the SSH session until commit/submit — text
 /// accumulates locally first, so swipe/voice composition (a stream) lands
@@ -61,7 +55,10 @@ class ComposeBar extends ConsumerStatefulWidget {
     required this.sessionId,
     required this.onClose,
     this.bottomReserve = 0,
+    this.isLive = _alwaysLive,
   });
+
+  static bool _alwaysLive() => true;
 
   /// The active session's terminal. Committed text is sent via
   /// `terminal.textInput` (onOutput → proxy.sendInput → PTY), like the keybar.
@@ -80,6 +77,11 @@ class ComposeBar extends ConsumerStatefulWidget {
   /// ABOVE this so it never hides the session bar (#610 — owner: "hides bottom
   /// bar entirely"). Passed by terminal_screen, which knows the keybar state.
   final double bottomReserve;
+
+  /// #1229: whether input would reach a live shell right now. The terminal
+  /// input path drops bytes while the session isn't live, so a send while this
+  /// is false must KEEP the text (and say so) rather than clear it as sent.
+  final bool Function() isLive;
 
   @override
   ConsumerState<ComposeBar> createState() => _ComposeBarState();
@@ -115,6 +117,10 @@ class _ComposeBarState extends ConsumerState<ComposeBar> {
   /// `widget.sessionId`.
   int _historyIndex = -1;
   String _historyStash = '';
+
+  /// #1229: the last send was refused because the session wasn't live. Shown
+  /// on the field until a send goes through.
+  bool _notSent = false;
 
   @override
   void initState() {
@@ -248,18 +254,27 @@ class _ComposeBarState extends ConsumerState<ComposeBar> {
   void _onChanged() => setState(() {});
 
   /// Send staged text, optionally followed by [trailing] ('\r' for submit).
-  /// Multi-line text is bracketed-paste wrapped so embedded newlines don't each
-  /// fire Enter. #614 (owner reversal): BOTH commit (trailing=='') and submit
+  /// Multi-line text goes as a paste: bracketed only when the remote enabled
+  /// DECSET 2004 (#1229), otherwise the markers would arrive as literal junk.
+  /// #614 (owner reversal): BOTH commit (trailing=='') and submit
   /// (trailing=='\r') HIDE the panel afterward via [onClose], so the full
   /// terminal is readable once composing is done.
   void _send({required String trailing}) {
     final text = _controller.text;
     if (text.isEmpty && trailing.isEmpty) return;
+    // #1229: the input path drops bytes while the session isn't live. Keep the
+    // text and the panel, and say so, instead of clearing it as if sent.
+    if (!widget.isLive()) {
+      setState(() => _notSent = true);
+      return;
+    }
+    _notSent = false;
     if (text.isNotEmpty) {
-      final payload = text.contains('\n')
-          ? '$_bracketedPasteStart$text$_bracketedPasteEnd'
-          : text;
-      widget.terminal.textInput(payload);
+      if (text.contains('\n')) {
+        widget.terminal.paste(text);
+      } else {
+        widget.terminal.textInput(text);
+      }
       // #797: record the sent command in the per-session history ring so it
       // can be recalled with ▲/▼ even after the panel closes. The notifier
       // dedups consecutive identical entries and caps the ring.
@@ -547,6 +562,13 @@ class _ComposeBarState extends ConsumerState<ComposeBar> {
                           decoration: InputDecoration(
                             isDense: true,
                             hintText: 'Compose (swipe / voice / type)',
+                            // #1229: persistent until a send goes through.
+                            error: _notSent
+                                ? const Text(
+                                    'Not connected — text kept, not sent',
+                                    key: Key('compose-bar-not-sent'),
+                                  )
+                                : null,
                             border: OutlineInputBorder(
                               borderRadius: BorderRadius.circular(8),
                             ),

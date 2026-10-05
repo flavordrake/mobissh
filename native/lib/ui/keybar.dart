@@ -442,6 +442,18 @@ class KeyRepeatController {
   }
 }
 
+/// The keybar Paste key: send the clipboard text to [terminal] as a PASTE —
+/// bracketed only when the remote enabled DECSET 2004 (#1229), so a multi-line
+/// clipboard isn't run line by line by a shell that asked for bracketed paste.
+@visibleForTesting
+Future<void> pasteClipboardToTerminal(Terminal terminal) async {
+  final data = await Clipboard.getData('text/plain');
+  final text = data?.text;
+  if (text != null && text.isNotEmpty) {
+    terminal.paste(text);
+  }
+}
+
 class Keybar extends ConsumerStatefulWidget {
   const Keybar({super.key, required this.activeEntry});
 
@@ -559,13 +571,7 @@ class _KeybarState extends ConsumerState<Keybar> {
     HapticFeedback.selectionClick();
   }
 
-  Future<void> _paste(Terminal terminal) async {
-    final data = await Clipboard.getData('text/plain');
-    final text = data?.text;
-    if (text != null && text.isNotEmpty) {
-      terminal.textInput(text);
-    }
-  }
+  Future<void> _paste(Terminal terminal) => pasteClipboardToTerminal(terminal);
 
   @override
   Widget build(BuildContext context) {
