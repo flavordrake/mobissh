@@ -84,6 +84,17 @@ _create() {
   ok "on $BRANCH (up to date with main)"
 }
 
+# Attribution changes per session (model, session link), so it is never
+# hard-coded here: the caller exports BOT_COMMIT_TRAILERS (one trailer per line,
+# exactly as its harness specifies). Unset = no trailer.
+_commit_message() {
+  if [ -n "${BOT_COMMIT_TRAILERS:-}" ]; then
+    printf '%s\n\n%s' "$1" "$BOT_COMMIT_TRAILERS"
+  else
+    printf '%s' "$1"
+  fi
+}
+
 _commit() {
   local msg="${1:-chore: bot changes for issue #${ISSUE_NUM}}"
   _ensure_on_branch
@@ -111,9 +122,7 @@ _commit() {
   log "committing:"
   echo "$changes" >&2
 
-  git commit -m "$msg
-
-Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>"
+  git commit -m "$(_commit_message "$msg")"
   git push -u origin "$BRANCH" 2>&1
   ok "committed and pushed to $BRANCH"
 }
@@ -201,9 +210,7 @@ _rescue() {
   log "committing:"
   echo "$changes" >&2
 
-  git commit -m "$msg
-
-Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>"
+  git commit -m "$(_commit_message "$msg")"
   git push -u origin "$BRANCH" 2>&1
   ok "pushed $BRANCH"
 

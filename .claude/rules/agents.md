@@ -24,7 +24,7 @@
 ## Repo safety
 
 - **Use intent-driven scripts:**
-  - `scripts/bot-branch.sh {create|commit|pr|ship} ISSUE_NUM` — branch lifecycle
+  - `scripts/bot-branch.sh {create|commit|pr|ship} ISSUE_NUM` — branch lifecycle. It hard-codes no attribution: export `BOT_COMMIT_TRAILERS` (the trailer lines your harness specifies) before `commit`/`ship`/`rescue`
   - `scripts/rescue-worktree.sh ISSUE_NUM` — extract stalled agent work
   - `scripts/worktree-cleanup.sh` — bulk cleanup at release time ONLY
   - `scripts/gh-ops.sh integrate PR ISSUE` — merge + prune
