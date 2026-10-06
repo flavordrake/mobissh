@@ -8,6 +8,8 @@
 // listener (R15), the missing-creds → editor fallback (R13a) and
 // `_popWhenConnected` (R21) are all reused instead of a new headless path.
 
+import 'dart:async';
+
 import 'package:app_links/app_links.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -98,12 +100,17 @@ final connectLinkRouterProvider = Provider<ConnectLinkRouter>((ref) {
     // A mounted ConnectForm consumes the hand-off synchronously via its
     // listener; if nothing took it, a terminal is showing — push the home
     // page over it so ConnectForm mounts and consumes on init.
+    //
+    // #1279 G1: NOT awaited. The router holds its one-link-in-flight guard
+    // until this returns, and the pushed route lives until the session
+    // connects (or the user backs out) — awaiting it dropped every later link
+    // for the whole connect.
     if (ref.read(pendingLinkConnectProvider) != null) {
-      await appNavigatorKey.currentState?.push(
+      unawaited(appNavigatorKey.currentState?.push(
         MaterialPageRoute<void>(
           builder: (_) => const ConnectHomePage(fromSession: true),
         ),
-      );
+      ));
     }
   }
 
@@ -165,7 +172,13 @@ final connectLinkRouterProvider = Provider<ConnectLinkRouter>((ref) {
       if (ctx == null) return;
       // Nothing is persisted until the user saves (R14); "Save & connect" then
       // takes the same hand-off a confirmed link does.
-      final result = await showProfileEditor(ctx, draft);
+      //
+      // #1279 G2 / F4: the host, port and user came from the link. The editor
+      // says so in a banner that cannot be dismissed, so it is on screen
+      // before the key-library picker could send a stored key's signature to
+      // a host the link chose.
+      final result =
+          await showProfileEditor(ctx, draft, linkProvenance: true);
       if (result?.saved ?? false) ref.invalidate(savedProfilesProvider);
       final toConnect = result?.connect;
       // No verb on this path: `create` can't carry one (parser), and for an

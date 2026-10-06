@@ -13,8 +13,11 @@
 import 'dart:convert';
 
 import '../storage/profiles_store.dart';
+import 'sftp_intent.dart' show maxLinkLength, validateLinkPath;
 
-enum ConnectVerb { connect, create }
+/// #1279: `sftp` opens the file browser at [ConnectRequest.path] on a saved
+/// profile. Parsed in S1; routed from S2 (the router rejects it until then).
+enum ConnectVerb { connect, create, sftp }
 
 /// A validated link. Every field already passed its R3–R6 rule; [host] is
 /// canonical (lower-cased, IPv6 without brackets).
@@ -27,6 +30,7 @@ class ConnectRequest {
     this.name,
     this.tmux,
     this.window,
+    this.path,
   });
 
   final ConnectVerb verb;
@@ -43,9 +47,36 @@ class ConnectRequest {
   /// #1211: the tmux window to select after the attach. Same shape as [tmux]
   /// (R6); only valid alongside it.
   final String? window;
+
+  /// #1279: `sftp` only. Already passed [validateLinkPath]: absolute (`/…`)
+  /// or home-relative (`~`, `~/…`). Null = the profile's default directory.
+  final String? path;
 }
 
-enum ConnectIntentReason { malformed, unknownVerb, badParam, duplicateKey, reserved }
+enum ConnectIntentReason {
+  malformed,
+  unknownVerb,
+  badParam,
+  duplicateKey,
+  reserved,
+  // #1279: a password in sftp userinfo, or a credential-named parameter.
+  credentialInLink,
+  // #1279: a path that fails the F6 rules.
+  badPath,
+  // #1279: a link longer than [maxLinkLength].
+  tooLong,
+}
+
+/// #1279 G3: §11 tells callers a credential or a command in a link is
+/// rejected. R7 ignores unknown keys so the grammar can grow, which made that
+/// promise false: `password=` or `cmd=` connected and was silently dropped.
+/// These names reject the whole link instead. A fixed list, not a pattern —
+/// R7 still ignores every other unknown key.
+const _credentialKeys = {
+  'password', 'pass', 'passwd', 'pw', 'passphrase', 'key', 'identity',
+  'token', 'secret',
+};
+const _commandKeys = {'cmd', 'command', 'exec', 'run', 'shell'};
 
 sealed class ConnectIntentResult {
   const ConnectIntentResult();
@@ -69,7 +100,9 @@ const _scheme = 'mobissh://';
 final _verbShape = RegExp(r'^[A-Za-z]+$');
 final _label = RegExp(r'^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$');
 final _portShape = RegExp(r'^[0-9]{1,5}$');
-final _userShape = RegExp(r'^[A-Za-z0-9._-]{1,64}$');
+
+/// R4 user shape; shared with `sftp_intent.dart`.
+final linkUserShape = RegExp(r'^[A-Za-z0-9._-]{1,64}$');
 final _nameShape = RegExp(r'^[A-Za-z0-9_-]{1,32}$');
 /// R6 tmux name shape; shared with `link_verb.dart` (R22 re-check).
 final tmuxNameShape = RegExp(r'^[A-Za-z0-9_][A-Za-z0-9_-]{0,31}$');
@@ -79,7 +112,10 @@ final tmuxNameShape = RegExp(r'^[A-Za-z0-9_][A-Za-z0-9_-]{0,31}$');
 ConnectIntentResult parseConnectIntent(String link) {
   const malformed = ConnectIntentRejected(ConnectIntentReason.malformed);
 
-  if (link.trim() != link || _hasControlChar(link)) return malformed;
+  if (link.length > maxLinkLength) {
+    return const ConnectIntentRejected(ConnectIntentReason.tooLong);
+  }
+  if (link.trim() != link || hasLinkControlChar(link)) return malformed;
   if (!link.startsWith(_scheme)) return malformed;
 
   final rest = link.substring(_scheme.length);
@@ -89,6 +125,7 @@ ConnectIntentResult parseConnectIntent(String link) {
   final verb = switch (verbText) {
     'connect' => ConnectVerb.connect,
     'create' => ConnectVerb.create,
+    'sftp' => ConnectVerb.sftp,
     _ => null,
   };
   if (verb == null) {
@@ -101,10 +138,12 @@ ConnectIntentResult parseConnectIntent(String link) {
       final eq = pair.indexOf('=');
       final rawKey = eq < 0 ? pair : pair.substring(0, eq);
       final rawValue = eq < 0 ? '' : pair.substring(eq + 1);
-      final key = _decodeOnce(rawKey);
-      final value = _decodeOnce(rawValue);
+      final key = decodeLinkOnce(rawKey);
+      final value = decodeLinkOnce(rawValue);
       if (key == null || value == null || key.isEmpty) return malformed;
-      if (_hasControlChar(key) || _hasControlChar(value)) return malformed;
+      if (hasLinkControlChar(key) || hasLinkControlChar(value)) {
+        return malformed;
+      }
       if (value.trim() != value) return malformed;
       if (params.containsKey(key)) {
         return ConnectIntentRejected(ConnectIntentReason.duplicateKey, key: key);
@@ -119,10 +158,20 @@ ConnectIntentResult parseConnectIntent(String link) {
     return const ConnectIntentRejected(ConnectIntentReason.reserved,
         key: 'claude');
   }
+  // #1279 G3: §11's "a command or a credential in the link is rejected".
+  for (final key in params.keys) {
+    if (_credentialKeys.contains(key)) {
+      return ConnectIntentRejected(ConnectIntentReason.credentialInLink,
+          key: key);
+    }
+    if (_commandKeys.contains(key)) {
+      return ConnectIntentRejected(ConnectIntentReason.reserved, key: key);
+    }
+  }
 
   String? host;
   if (params.containsKey('host')) {
-    host = _canonicalLinkHost(params['host']!);
+    host = canonicalLinkHost(params['host']!);
     if (host == null) return _bad('host');
   }
 
@@ -135,15 +184,26 @@ ConnectIntentResult parseConnectIntent(String link) {
   }
 
   final user = params['user'];
-  if (user != null && !_userShape.hasMatch(user)) return _bad('user');
+  if (user != null && !linkUserShape.hasMatch(user)) return _bad('user');
 
   final name = params['name'];
   if (name != null && !_nameShape.hasMatch(name)) return _bad('name');
 
   final tmux = params['tmux'];
   if (tmux != null) {
-    if (verb == ConnectVerb.create || !tmuxNameShape.hasMatch(tmux)) {
+    if (verb != ConnectVerb.connect || !tmuxNameShape.hasMatch(tmux)) {
       return _bad('tmux');
+    }
+  }
+
+  // #1279 G3: `path` is a known key now, so off `sftp` it rejects the whole
+  // link instead of connecting and silently dropping it (R7).
+  String? path;
+  if (params.containsKey('path')) {
+    if (verb != ConnectVerb.sftp) return _bad('path');
+    path = validateLinkPath(params['path']!);
+    if (path == null) {
+      return const ConnectIntentRejected(ConnectIntentReason.badPath);
     }
   }
 
@@ -156,7 +216,7 @@ ConnectIntentResult parseConnectIntent(String link) {
   }
 
   final required = switch (verb) {
-    ConnectVerb.connect => host != null || name != null,
+    ConnectVerb.connect || ConnectVerb.sftp => host != null || name != null,
     ConnectVerb.create => host != null,
   };
   if (!required) return malformed;
@@ -169,13 +229,21 @@ ConnectIntentResult parseConnectIntent(String link) {
     name: name,
     tmux: tmux,
     window: window,
+    path: path,
   ));
 }
 
 ConnectIntentRejected _bad(String key) =>
     ConnectIntentRejected(ConnectIntentReason.badParam, key: key);
 
-bool _hasControlChar(String s) {
+/// R4 port rule (1–65535) on the raw digits; null when it fails.
+int? parseLinkPort(String text) {
+  final n = _portShape.hasMatch(text) ? int.parse(text) : 0;
+  return (n < 1 || n > 65535) ? null : n;
+}
+
+/// R2: any C0 control or DEL.
+bool hasLinkControlChar(String s) {
   for (final c in s.codeUnits) {
     if (c < 0x20 || c == 0x7f) return true;
   }
@@ -191,7 +259,7 @@ int _hexDigit(int c) {
 
 /// Percent-decode exactly once. `+` stays literal. A dangling or non-hex
 /// escape, or a byte sequence that is not UTF-8, yields null (malformed).
-String? _decodeOnce(String s) {
+String? decodeLinkOnce(String s) {
   final bytes = <int>[];
   final text = StringBuffer();
   var i = 0;
@@ -221,7 +289,7 @@ String? _decodeOnce(String s) {
 
 /// R3: RFC 1123 labels or bracketed IPv6. Returns the canonical host (lower-
 /// cased, brackets stripped) or null when the value is not a bare host.
-String? _canonicalLinkHost(String raw) {
+String? canonicalLinkHost(String raw) {
   if (raw.startsWith('[') && raw.endsWith(']')) {
     final inner = raw.substring(1, raw.length - 1);
     try {
@@ -274,7 +342,8 @@ ConnectMatch matchConnectRequest(
   List<SavedProfile> profiles, {
   required String? Function(SavedProfile) alias,
 }) {
-  if (request.verb == ConnectVerb.connect && request.name != null) {
+  // `name` is an alias on connect and sftp (#1279 F10), a label on create.
+  if (request.verb != ConnectVerb.create && request.name != null) {
     final hits = profiles.where((p) => alias(p) == request.name).toList();
     if (hits.isEmpty) return const AliasMiss();
     if (hits.length == 1) return Matched(hits.first);

@@ -46,7 +46,6 @@ import 'import_profiles_dialog.dart';
 import 'profile_editor.dart';
 import 'profile_list.dart';
 import 'ssh_config_export_dialog.dart';
-import 'top_toast.dart';
 
 class ConnectForm extends ConsumerStatefulWidget {
   const ConnectForm({super.key});
@@ -70,6 +69,10 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
   /// any that are still armed (session never connected before the chooser
   /// unmounted), avoiding a leaked stream subscription.
   final List<StreamSubscription<SshSessionData>> _recentSaveSubs = [];
+
+  /// #1279 G4: the last jump-chain resolution failure, shown as a persistent
+  /// banner until dismissed or a later connect resolves its chain.
+  String? _jumpError;
 
   @override
   void initState() {
@@ -206,6 +209,19 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
                   key: const Key('link-rejected-dismiss'),
                   onPressed: () =>
                       ref.read(linkRejectedProvider.notifier).state = false,
+                  child: const Text('Dismiss'),
+                ),
+              ],
+            ),
+          if (_jumpError != null)
+            MaterialBanner(
+              key: const Key('jump-host-error-banner'),
+              content: Text(_jumpError!),
+              leading: const Icon(Icons.alt_route),
+              actions: [
+                TextButton(
+                  key: const Key('jump-host-error-dismiss'),
+                  onPressed: () => setState(() => _jumpError = null),
                   child: const Text('Dismiss'),
                 ),
               ],
@@ -597,19 +613,25 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
     // chain that cannot be resolved (cycle / too deep) or a hop whose secret is
     // missing fails CLOSED with a named error rather than silently connecting
     // direct, which would route the session the wrong way.
+    //
+    // #1279 G4: the failure is guidance the user must act on (fix the hop's
+    // profile), so it is a PERSISTENT banner on the chooser, not a toast that
+    // is gone before it is read — on a link connect especially, where the
+    // user did not tap anything here.
     final List<SshConnectParams> jumpHops;
     try {
       jumpHops = await _resolveJumpHops(profile);
     } on JumpChainError catch (e) {
       if (!mounted) return;
-      showTopToast(context, 'Jump host: ${e.message}');
+      setState(() => _jumpError = 'Jump host: ${e.message}');
       return;
     } on JumpHopError catch (e) {
       if (!mounted) return;
-      showTopToast(context, 'Jump host $e');
+      setState(() => _jumpError = 'Jump host $e');
       return;
     }
     if (!mounted) return;
+    if (_jumpError != null) setState(() => _jumpError = null);
 
     final params = SshConnectParams(
       host: profile.host,

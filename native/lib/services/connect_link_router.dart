@@ -30,6 +30,7 @@ import '../storage/profiles_store.dart';
 import 'connect_intent.dart';
 import 'link_verb.dart';
 import 'session_attention_notification.dart';
+import 'sftp_intent.dart';
 
 /// The user's answer to the R12 confirmation. `null` = cancelled.
 enum LinkConfirmChoice { once, always }
@@ -64,6 +65,7 @@ class PendingLinkBridge {
         'name': request.name,
         'tmux': request.tmux,
         'window': request.window,
+        'path': request.path,
         '_seq': ++_seq,
       }),
     );
@@ -86,6 +88,7 @@ class PendingLinkBridge {
         name: m['name'] as String?,
         tmux: m['tmux'] as String?,
         window: m['window'] as String?,
+        path: m['path'] as String?,
       );
     } catch (_) {
       return null;
@@ -156,21 +159,56 @@ class ConnectLinkRouter {
   final void Function() _reject;
   final void Function(String where, String msg)? _log;
 
+  /// #1279 G1 / F8: true from parse until the confirm / picker / editor and
+  /// the connect hand-off are done. Only one link is ever in flight.
+  bool _inFlight = false;
+
   /// Cold-start or warm delivery of a raw link.
+  ///
+  /// #1279 G1 / F8: a link that arrives while another is in flight is
+  /// DROPPED — not queued (a burst would stack dialogs) and not swapped in
+  /// for the pending one (a swap under the user's tap is the attack). It
+  /// leaves no banner and does not touch the pending record.
   Future<void> deliver(String link) async {
-    switch (parseConnectIntent(link)) {
-      case ConnectIntentRejected(:final reason, :final key):
-        _rejected('reason=${reason.name}${key == null ? '' : ' key=$key'}');
-      case ConnectIntentParsed(:final request):
-        await _bridge.setPending(request);
-        await consumePending();
+    if (_inFlight) {
+      _log?.call('ui.link', 'dropped reason=busy');
+      return;
+    }
+    _inFlight = true;
+    try {
+      switch (parseLink(link)) {
+        case ConnectIntentRejected(:final reason, :final key):
+          _rejected('reason=${reason.name}${key == null ? '' : ' key=$key'}');
+        case ConnectIntentParsed(:final request):
+          await _bridge.setPending(request);
+          await _consume();
+      }
+    } finally {
+      _inFlight = false;
     }
   }
 
   /// One-shot consume of the pending record (init + resume, R18).
   Future<void> consumePending() async {
+    if (_inFlight) return; // the in-flight link already took the record
+    _inFlight = true;
+    try {
+      await _consume();
+    } finally {
+      _inFlight = false;
+    }
+  }
+
+  Future<void> _consume() async {
     final request = await _bridge.takePending();
     if (request == null) return;
+    // #1279 S1: sftp links parse, but the browser hand-off is slice S2. A
+    // plain connect here would drop the path — the silent "less than asked"
+    // R7 forbids — so until S2 the link is rejected.
+    if (request.verb == ConnectVerb.sftp) {
+      _rejected('reason=notRouted verb=sftp');
+      return;
+    }
     // R22: the verb is typed here, from the validated token, and nowhere else.
     final verb = LinkVerbCommand.fromRequest(request);
     final profiles = await _loadProfiles();

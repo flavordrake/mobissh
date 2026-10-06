@@ -43,6 +43,11 @@ String? fileUrlToRemotePath(String url) {
 ///
 /// The default SSH port 22 is omitted. Built via [Uri] so the userInfo/host/
 /// path are percent-encoded correctly (a space in the path yields a valid URL).
+///
+/// #1279: a literal `%` in a file name is escaped first. [Uri] keeps an
+/// existing `%XX` escape as-is (and decodes unreserved ones), so a file named
+/// `%2e` came out as `/.` and a file named `a%20b` as `a b` — the URL named a
+/// different file than the one copied.
 String sftpUrlForRemotePath({
   required String username,
   required String host,
@@ -54,6 +59,6 @@ String sftpUrlForRemotePath({
     userInfo: username,
     host: host,
     port: port == 22 ? null : port,
-    path: path,
+    path: path.replaceAll('%', '%25'),
   ).toString();
 }

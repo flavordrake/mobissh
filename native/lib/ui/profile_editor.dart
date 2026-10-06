@@ -93,11 +93,16 @@ Future<ProfileEditorResult?> showProfileEditor(
   BuildContext context,
   SavedProfile profile, {
   String? notice,
+  bool linkProvenance = false,
 }) {
   return Navigator.of(context).push<ProfileEditorResult>(
     MaterialPageRoute<ProfileEditorResult>(
       fullscreenDialog: true,
-      builder: (_) => ProfileEditor(profile: profile, notice: notice),
+      builder: (_) => ProfileEditor(
+        profile: profile,
+        notice: notice,
+        linkProvenance: linkProvenance,
+      ),
     ),
   );
 }
@@ -126,6 +131,7 @@ class ProfileEditor extends ConsumerStatefulWidget {
     required this.profile,
     this.isNew = false,
     this.notice,
+    this.linkProvenance = false,
   });
 
   final SavedProfile profile;
@@ -139,6 +145,12 @@ class ProfileEditor extends ConsumerStatefulWidget {
   /// "re-enter the credential" prompt — which a transient toast dropped before
   /// it could be read (owner-reported on rc.2). Dismissible.
   final String? notice;
+
+  /// #1279 G2 / F4: the draft's host came from a link and is not saved.
+  /// Shows a banner that cannot be dismissed, above everything on the Details
+  /// tab, so it is on screen before the key-library picker can attach a
+  /// stored key to that host.
+  final bool linkProvenance;
 
   @override
   ConsumerState<ProfileEditor> createState() => _ProfileEditorState();
@@ -709,6 +721,15 @@ class _ProfileEditorState extends ConsumerState<ProfileEditor>
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              if (widget.linkProvenance) ...[
+                _buildNotice(
+                  context,
+                  'This host came from a link and is not saved. Check the '
+                  'host, port and username before you connect or pick a key.',
+                  noticeKey: const Key('profile-editor-link-provenance'),
+                ),
+                const SizedBox(height: 12),
+              ],
               if (_notice != null) ...[
                 _buildNotice(
                   context,

@@ -89,7 +89,8 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byType(ConnectHomePage), findsNothing);
 
-    // deliver() awaits the pushed route, so it only completes on pop.
+    // deliver() returns once the hand-off is made (#1279 G1: it no longer
+    // awaits the pushed route); not awaited here so frames can be pumped.
     // ignore: unawaited_futures
     container
         .read(connectLinkRouterProvider)
