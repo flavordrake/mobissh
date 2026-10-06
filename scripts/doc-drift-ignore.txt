@@ -12,3 +12,38 @@ scripts/start-appium.sh
 scripts/run-appium-tests.sh
 scripts/run-ios-tests.sh
 scripts/test-headless.sh
+
+# Entries below are read by devloop's doc-parity (AGENTS.md `## Doc surfaces` points
+# here). A `kind:` prefix waives one doc-parity kind; doc-drift never matches them.
+
+# Placeholder in the integration-test header grammar (.claude/rules/testing.md), bare-name form.
+script:z.sh
+
+# Created on first use, not shipped: crystallize's tool registry, and demo-gif.sh's
+# output directory for README media.
+path:.claude/tool-registry.md
+path:docs/media/
+
+# Foreign paths: notify-bell.sh is the user-side hook INTEGRATION.md tells the reader to
+# create under ~/.claude/hooks/; flutter-route.sh belongs to the fleet build runner
+# (/home/dev/build-runner) and is sourced only when that runner exists.
+script:notify-bell.sh
+script:flutter-route.sh
+
+# Retired-PWA paths quoted by history-bannered research docs (removed in #1205), and the
+# test files docs/native-rewrite-lessons-from-pwa.md planned under PWA-era names.
+script:run-appium-tests.sh
+path:test-history/appium/
+path:public/modules/
+path:public/app.js
+path:public/vendor/*
+path:test/*_test.dart
+
+# flutter-cmd.sh hands its arguments to flutter; build/test/run/drive are flutter's own
+# subcommands, matched only to arm the disk guard.
+cli:flutter-cmd.sh *
+
+# Unregistered local copies of devloop hooks (the plugin registers its own); they go when
+# the vendored devloop scripts switch over to the plugin.
+.claude/hooks/enforce-hygiene.sh
+.claude/hooks/trace-signal.sh

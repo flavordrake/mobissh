@@ -9,7 +9,7 @@
 # exist are dropped: they are comments, not calls.
 #
 # Direction b, "paths the docs name": scripts/...{sh,mjs,py}, scripts/.../ and
-# docs/...md tokens in CLAUDE.md, README.md, developer.md, SECURITY.md,
+# docs/...md tokens in CLAUDE.md, AGENTS.md, README.md, developer.md, SECURITY.md,
 # INTEGRATION.md, docs/**/*.md, native/*.md, .claude/process.md,
 # .claude/rules/*.md, .claude/agents/*.md, .claude/skills/*/SKILL.md. A token
 # ending in `/` is a directory claim covering every path under it.
@@ -69,7 +69,7 @@ while IFS= read -r c; do [[ -n "$c" && -e "$c" ]] && echo "$c"; done < "$CALLED_
 
 # Direction b: paths the docs name.
 DOC_FILES=()
-for f in CLAUDE.md README.md developer.md SECURITY.md INTEGRATION.md .claude/process.md; do
+for f in CLAUDE.md AGENTS.md README.md developer.md SECURITY.md INTEGRATION.md .claude/process.md; do
   [[ -f "$f" ]] && DOC_FILES+=("$f")
 done
 while IFS= read -r -d '' f; do DOC_FILES+=("$f"); done < <(find docs -name '*.md' -print0 2>/dev/null)

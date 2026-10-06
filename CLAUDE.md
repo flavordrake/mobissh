@@ -2,6 +2,8 @@
 
 > **Active TRACE**: `.traces/trace-docs-two-way-sync-123001/` — two-way doc/code sync and release prep #1240 (fleet doc-drift standard, `scripts/doc-drift.sh`; README/developer.md split). Prior arcs: `.traces/trace-link-browser-routing-1195-175316/` (#1195 shipped +189 — device validation owed), `.traces/trace-jump-host-1182-183208/` (#1182 COMPLETE, shipped +188 — device validation owed), `.traces/trace-link-highlight-options-222819/` (#1153 shipped +186). Side arcs: coverage tooling #1152 merged (Phase 2 assessment → backfill issues pending); deep-link emulator gap #1151 merged. Prior arcs: `.traces/trace-deep-link-intents-1117-200922/` (#1117, shipped +184; owner device validation owed; claude verb R24 deferred), `.traces/trace-fleet-emulator-gate-restore-003808/`. Durable learnings in memory.
 
+@AGENTS.md
+
 ## Command Hygiene (read this first)
 - **One script per Bash call.** No `&&` chains, no `;` sequences, no compound commands.
 - **No shell redirects.** Scripts handle their own output. No `> /tmp/foo`, no `2>/dev/null`.
@@ -95,5 +97,5 @@ Detailed rules live in `.claude/rules/` (modular, some path-scoped):
 
 ## TRACE Protocol
 Development arcs are captured in `.traces/` (gitignored, local). Use `scripts/trace-init.sh <slug>`
-to start a new TRACE. See `.claude/skills/agent-trace/SKILL.md` for full protocol.
+to start a new TRACE. See devloop's `agent-trace` skill for full protocol.
 Active TRACE should be referenced at top of this file for session continuity.

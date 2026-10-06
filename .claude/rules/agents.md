@@ -1,25 +1,23 @@
 # MobiSSH Agents
 
-## Spawning patterns
-
-| Agent | subagent_type | isolation | run_in_background |
-|-------|---------------|-----------|-------------------|
-| delegate-scout | general-purpose | (none) | false |
-| issue-manager | general-purpose | (none) | true |
-| integrate-gater | general-purpose | worktree | true |
-| develop | general-purpose | worktree | true |
+devloop's `agents` rule covers agent types (`devloop:<name>`), isolation and
+permissions; its `/develop` and `/cycle` skills set the 4-agent, 3-cycle, 1-hour limits.
+These are the project additions.
 
 ## Project-specific constraints
 
-- Max 4 simultaneous develop agents. Queue the rest.
+- Every agent reads `.claude/constitution.md` first; pass it to every agent you spawn.
 - Max 2 simultaneous integrate-gater agents.
-- Develop agents have a 1-hour wall clock timeout and max 3 implementation cycles.
-- `integrate-gate.sh` takes branch name as first arg, not issue number.
+- No `model` parameter on Agent calls (CLAUDE.md).
+- Run each step of a multi-step gate (`full` in `AGENTS.md`) as its own Bash call; never `&&`-chain it.
 - Always commit infra changes BEFORE delegating. Worktrees clone from HEAD, not working directory.
-- Verify commands in delegation: `scripts/native-fast-gate.sh` (never compound `&&` chains).
-- Bot branches use pattern `bot/issue-{N}`. Develop agents create and push these.
+- Bot branches use pattern `bot/issue-{N}`. Check whether one is pushed with `scripts/run-in-repo.sh git ls-remote origin bot/issue-{N}`: `gh-ops.sh search` lists issues only, never PRs or branches.
 - Bot branches get deleted during integration. Run `git remote prune origin` to clean stale tracking refs.
-- Develop agent failure summaries are appended to `memory/bot-attempts.md`. Review before retrying.
+- Develop agent failure summaries are appended to the bot attempt log named in `AGENTS.md`. Review before retrying.
+- `gh-ops.sh fetch-issues` writes one shared default file (`$MOBISSH_TMPDIR/fetched-issues.md`) that concurrent agents clobber: always pass `--out <own file>`.
+- Scripts run by RELATIVE path (`scripts/x.sh`) from the agent's worktree root: the allow-list matches `Bash(scripts/*)` relative to CWD, so an absolute main-repo path is denied, and it would run main's code, not the agent's.
+- Never end a turn on a pending gate, test run or Monitor. A stopped agent is never re-invoked by its own background job: run gates in the foreground (long timeout) or read the task's output file until it reports, then finish through to `DEVELOP_RESULT`.
+- Develop agents in this repo additionally: run `semgrep scan --config auto` on their changed files and log real findings to the TRACE's `logs/security-findings.md` (fix trivial ones, never block on the rest); never add inline styles to `public/` HTML; never log secrets (telemetry rings and bug reports leave the device).
 
 ## Repo safety
 
