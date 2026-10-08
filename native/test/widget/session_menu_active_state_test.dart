@@ -259,8 +259,7 @@ void main() {
 
         expect(find.byKey(Key('session-menu-files-${a.id}')), findsOneWidget);
         expect(find.byKey(Key('session-menu-close-${a.id}')), findsOneWidget);
-        // Owner request: a CONNECTED session now offers Reconnect (force) — e.g.
-        // to pick up a control-mode toggle that only applies on reconnect.
+        // Owner request: a CONNECTED session now offers Reconnect (force).
         expect(
           find.byKey(Key('session-menu-reconnect-${a.id}')),
           findsOneWidget,

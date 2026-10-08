@@ -11,7 +11,7 @@ duplicates; its code lives only in git history.
   - `services/` — the UI ↔ foreground-task isolate gateway (`task_ssh_gateway.dart`; SSH runs in the task isolate), session host, keepalive, SFTP download/fetchers, link routing, self-update, attention notifications
   - `state/` — Riverpod providers (sessions, connections, profiles, keys, detection, UI prefs)
   - `storage/` — profiles/keys/favorites/detection stores, `secrets_store.dart` (flutter_secure_storage), encrypted backup (`backup.dart`)
-  - `terminal/` — session stream parsing, tmux control mode, URL hit-testing
+  - `terminal/` — session stream parsing, URL hit-testing
   - `ui/` — screens, sheets, terminal view and its gutter/decorator layers, file viewers
   - `diagnostics/` — paint/frame stats, byte/gesture/connect traces, feedback bundle, crash reporter
   - `platform/`, `util/` — desktop glue, small helpers

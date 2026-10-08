@@ -233,7 +233,6 @@ class _DiagnosticsSectionState extends State<DiagnosticsSection> {
         connectLog: connectLogSnapshot(),
         gestureLog: gestureLogSnapshot(),
         lifecycleLog: lifecycleLogSnapshot(),
-        controlModeTrace: controlModeLogSnapshot(),
         detectionExceptions: exceptionLines,
         // #1135: frame timing + viewport + session load. The share path is the
         // only route off the device when the network is down, so it carries the

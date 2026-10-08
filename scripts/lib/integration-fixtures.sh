@@ -97,11 +97,10 @@ integration_declared_runner() {
 }
 
 # --- G1: per-test setup / teardown scripts ---------------------------------
-# Six control-mode tests need a tmux fixture built on the sshd BEFORE the app
-# connects; each names its script in its header. TEARDOWN IS NOT OPTIONAL:
-# cc-nested-setup.sh installs a ~/.bash_profile that `exec tmux attach` on every
-# interactive login, so skipping the teardown poisons every later test on that
-# fixture. Echo one script path per line ("" when none).
+# Some tests need a fixture built on the sshd BEFORE the app connects; each
+# names its script in its header. A test that changes the fixture's state names
+# a teardown too, and the runner always runs it. Echo one script path per line
+# ("" when none).
 integration_setup_scripts() {
   local f
   f="$(integration_test_path "$1")"
@@ -168,9 +167,8 @@ integration_run_one() {
     [[ "$trc" -eq 0 ]] || rc=1
   fi
 
-  # TEARDOWN ALWAYS, including after a failure. cc-nested-setup.sh installs a
-  # ~/.bash_profile that `exec tmux attach` on every interactive login; leaving
-  # it in place breaks every later test that connects to this fixture.
+  # TEARDOWN ALWAYS, including after a failure: a setup left in place (a login
+  # profile, a proxy) breaks every later test that connects to this fixture.
   for s in "${teardowns[@]}"; do
     [[ -n "$s" ]] || continue
     echo "> (teardown for ${t}: ${s})"

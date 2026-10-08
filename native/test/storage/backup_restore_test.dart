@@ -134,7 +134,6 @@ Map<String, Object?> _fullPayload() => <String, Object?>{
         'mobissh.ui.terminalBackend': 'xterm',
         'mobissh.ui.composeBarVisible': true,
         'mobissh.keepalive.enabled': true,
-        'mobissh.ui.tmuxControlMode': true,
         'mobissh.files.sort.v1': jsonEncode({
           'version': 1,
           'profiles': {
@@ -224,7 +223,7 @@ void main() {
       expect(result.keysImported, 1);
       expect(result.pinsAdded, 1);
       expect(result.pinsConflicting, 0);
-      expect(result.settingsApplied, 9);
+      expect(result.settingsApplied, 8);
       expect(result.settingsSkipped, 0);
 
       // Profiles + trusted handles + commands/forwards (restoreCommands on).
@@ -298,7 +297,6 @@ void main() {
       expect(prefs.getString('mobissh.ui.terminalBackend'), 'xterm');
       expect(prefs.getBool('mobissh.ui.composeBarVisible'), isTrue);
       expect(prefs.getBool('mobissh.keepalive.enabled'), isTrue);
-      expect(prefs.getBool('mobissh.ui.tmuxControlMode'), isTrue);
       expect(prefs.getString('mobissh.files.sort.v1'), isNotNull);
       expect(prefs.getString('mobissh.detection.settings'), isNotNull);
     });
@@ -692,6 +690,31 @@ void main() {
       expect(prefs.containsKey('mobissh.unknown.thing'), isFalse);
       expect(prefs.containsKey('mobissh.ui.fontSize'), isFalse);
       expect(prefs.containsKey('mobissh.ui.fontFamily'), isFalse);
+    });
+
+    // #1285: tmux control mode is removed. A backup made while it was ON
+    // restores cleanly: the old key is ignored like any unknown key, never
+    // written, never counted, and the rest of the backup still applies.
+    test('a backup carrying the retired tmux control-mode key restores '
+        'harmlessly', () async {
+      final prefs = await _freshPrefs();
+      final secrets = SecretsStore(backend: InMemorySecretsBackend());
+      final result = await applyBackupPayload(
+        <String, Object?>{
+          'payloadVersion': 1,
+          'settings': {
+            'mobissh.ui.tmuxControlMode': true,
+            'mobissh.ui.composeBarVisible': true,
+          },
+        },
+        prefs: prefs,
+        secrets: secrets,
+      );
+      expect(result.errors, isEmpty);
+      expect(result.settingsApplied, 1);
+      expect(result.settingsSkipped, 0);
+      expect(prefs.containsKey('mobissh.ui.tmuxControlMode'), isFalse);
+      expect(prefs.getBool('mobissh.ui.composeBarVisible'), isTrue);
     });
   });
 

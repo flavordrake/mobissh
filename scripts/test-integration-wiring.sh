@@ -70,7 +70,6 @@ done
 
 # 4. Every declared setup/teardown script must EXIST and be executable —
 #    otherwise the runner brackets a test with a prerequisite that cannot run.
-declares_nested=0
 for f in "$ITEST_DIR"/*_test.dart; do
   name="$(basename "$f")"
   while read -r s; do
@@ -81,27 +80,9 @@ for f in "$ITEST_DIR"/*_test.dart; do
       bad "${name} declares ${s}, which is missing or not executable"
     fi
   done < <(integration_setup_scripts "$f"; integration_teardown_scripts "$f")
-
-  # 5. THE POISON RULE. cc-nested-setup.sh installs a ~/.bash_profile that
-  #    `exec tmux attach` on every interactive login. A test that asks for it
-  #    and does NOT declare the matching teardown would break every later test
-  #    on the same fixture, and the breakage would look like a product bug.
-  if integration_setup_scripts "$f" | grep -q 'cc-nested-setup.sh'; then
-    declares_nested=$((declares_nested + 1))
-    if integration_teardown_scripts "$f" | grep -q 'cc-nested-teardown.sh'; then
-      ok "${name} declares the nested-tmux teardown with its setup"
-    else
-      bad "${name} installs the nested-login guard with NO teardown — it would poison every later test"
-    fi
-  fi
 done
-if [[ "$declares_nested" -ge 1 ]]; then
-  ok "the nested-tmux fixture is still exercised (${declares_nested} tests)"
-else
-  bad "expected >=1 test to use cc-nested-setup.sh, found ${declares_nested}"
-fi
 
-# 6. Platform: exactly the desktop smoke declares its own runner, and it is the
+# 5. Platform: exactly the desktop smoke declares its own runner, and it is the
 #    desktop one. The Android suite ran it against the guest, where `test-sshd`
 #    is unresolvable, so it was a permanent fake red (#1101 G2).
 declared=()
@@ -120,7 +101,7 @@ else
   bad "desktop_smoke does not name its real runner"
 fi
 
-# 7. The parser itself, against synthetic declarations — so the rules above are
+# 6. The parser itself, against synthetic declarations — so the rules above are
 #    testing a parser that works, not one that happens to match today's corpus.
 SANDBOX="$(mktemp -d "${MOBISSH_TMPDIR:-/tmp/mobissh}/integration-wiring-test.XXXXXX")"
 trap 'rm -rf "$SANDBOX"' EXIT
@@ -177,7 +158,7 @@ fi
 INTEGRATION_REPO_ROOT="$REPO_ROOT"
 unset INTEGRATION_MANIFEST INTEGRATION_TEST_DIR 2>/dev/null || true
 
-# 8. THE BASELINE MANIFEST, against the real corpus (#1101/#1205). The suite no
+# 7. THE BASELINE MANIFEST, against the real corpus (#1101/#1205). The suite no
 #    longer demands an all-green run — it enforces
 #    native/integration_test/BASELINE.manifest. That file is only worth anything
 #    if it cannot drift from the tests on disk, and this is where that is caught,
@@ -213,7 +194,7 @@ while read -r name; do
   fi
 done < <(manifest_list known-red)
 
-# 9. The VERDICT itself, on synthetic runs. The four conditions the suite exists
+# 8. The VERDICT itself, on synthetic runs. The four conditions the suite exists
 #    to enforce are a pure function of (manifest, pass list, fail list), so they
 #    are provable here rather than only on a device an hour into a lease. An
 #    enforcement mechanism nobody has watched fail is not known to work.

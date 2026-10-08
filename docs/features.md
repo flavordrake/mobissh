@@ -20,7 +20,6 @@ The full feature reference. The short tour is in [README.md](../README.md).
 - **Compose bar.** A floating text box where swipe typing, voice dictation and autocorrect work. Send a line or a multi-line paste, and recall earlier entries per session.
 - **Multiple sessions.** Swipe the session bar to switch. Sessions survive the app going to the background (an Android foreground service keeps them alive) and reconnect on resume if they dropped.
 - **Notifications.** A terminal bell, OSC 9 or OSC 777 from a background session raises a notification; tapping it opens that session and, for tmux, the window that rang. [INTEGRATION.md](../INTEGRATION.md) shows how to make Claude Code, Codex, Gemini CLI or OpenCode ring when they need you.
-- **tmux control mode (experimental).** An opt-in setting (Settings → Advanced → Show experimental settings) attaches with `tmux -CC` and switches windows with real tmux commands. Off by default; scrollback does not render in this mode yet.
 
 ## SFTP client with round-trip editing
 

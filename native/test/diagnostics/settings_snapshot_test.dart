@@ -9,7 +9,6 @@ import 'package:mobissh/state/detection_providers.dart';
 import 'package:mobissh/state/feature_flags_providers.dart';
 import 'package:mobissh/state/files_sort_providers.dart';
 import 'package:mobissh/state/keepalive_providers.dart';
-import 'package:mobissh/state/tmux_control_mode_setting.dart';
 import 'package:mobissh/state/ui_prefs_providers.dart';
 import 'package:mobissh/storage/keys_store.dart';
 import 'package:mobissh/ui/feedback_overlay.dart';
@@ -31,20 +30,30 @@ void main() {
       fontSizePrefKey: 15.0,
       fontFamilyPrefKey: 'FiraCode',
       keepaliveEnabledPrefKey: true,
-      tmuxControlModePrefKey: true,
       detectionSettingsPrefKey: '{"v":1,"enabled":true,"url":false}',
       featureFlagsPrefKey: '{"v":1,"showExperimental":false}',
     });
     expect(snap[fontSizePrefKey], 15.0);
     expect(snap[fontFamilyPrefKey], 'FiraCode');
     expect(snap[keepaliveEnabledPrefKey], isTrue);
-    expect(snap[tmuxControlModePrefKey], isTrue);
     expect(snap[detectionSettingsPrefKey], {
       'v': 1,
       'enabled': true,
       'url': false,
     });
     expect(snap[featureFlagsPrefKey], {'v': 1, 'showExperimental': false});
+  });
+
+  // #1285: the tmux control-mode setting is removed. A device that still holds
+  // the old pref does not report it.
+  test('the retired tmux control-mode pref is not in the snapshot', () {
+    const retired = 'mobissh.ui.tmuxControlMode';
+    expect(kSettingsSnapshotKeys, isNot(contains(retired)));
+    final snap = buildSettingsSnapshot(<String, Object?>{
+      fontSizePrefKey: 13.0,
+      retired: true,
+    });
+    expect(snap.keys, [fontSizePrefKey]);
   });
 
   test('a secret-shaped or unknown pref is never included', () {

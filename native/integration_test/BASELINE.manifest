@@ -33,7 +33,8 @@
 #   elsewhere | <file>_test.dart       | <the runner that owns it>
 # No field may contain a `|`. Every known-red needs BOTH an issue and a reason.
 
-accepted  | 20260920T155254Z | expect=88 | known-red=10 | elsewhere=1
+# #1285 removed tmux control mode and its nine cc_* tests (all expect): 88 -> 79.
+accepted  | 20260920T155254Z | expect=79 | known-red=10 | elsewhere=1
 
 # --- not this suite's to run ------------------------------------------------
 # Cross-checked against the test's own `// Runner:` header: a test declares its
@@ -62,7 +63,7 @@ known-red | mermaid_markdown_render_test.dart | #1201 | seeds the fixture before
 known-red | profile_color_picker_1030_test.dart | #1101 | G6b: ensureVisible races the keyboard animation and warnIfMissed:false swallows the miss
 known-red | wrap_join_copy_test.dart | #1101 | G6b: anchors the gutter band at 5% of box height, which is viewport row 1 at this device's geometry, so the head row is outside it
 
-# --- expected to pass (82) --------------------------------------------------
+# --- expected to pass (79) --------------------------------------------------
 # Every one of these passed on clean main against the fleet device. Any of them
 # going red in a PR is signal about the PR.
 expect    | active_session_reconnect_test.dart
@@ -72,15 +73,6 @@ expect    | background_snapshot_gate_test.dart
 # #1259: new, not yet device-run (fleet emulator down at authoring).
 expect    | backup_v2_roundtrip_test.dart
 expect    | browser_targets_1196_test.dart
-expect    | cc_attach_existing_test.dart
-expect    | cc_capture_attach_test.dart
-expect    | cc_capture_scroll_test.dart
-expect    | cc_churn_bounded_test.dart
-expect    | cc_exec_switch_test.dart
-expect    | cc_gestures_test.dart
-expect    | cc_nested_exec_test.dart
-expect    | cc_render_test.dart
-expect    | cc_setting_test.dart
 expect    | command_chip_998_test.dart
 expect    | command_incomplete_1042_test.dart
 expect    | connect_key_smoke_test.dart
