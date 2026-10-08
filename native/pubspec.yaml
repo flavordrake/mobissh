@@ -61,9 +61,6 @@ dependencies:
   # OS-backed credential vault — replaces PWA's PBKDF2+WebAuthn dance
   flutter_secure_storage: ^9.2.2
 
-  # Biometric unlock — replaces PasswordCredential gymnastics
-  local_auth: ^2.3.0
-
   # Foreground service for persistent SSH session (escape Android Doze + tab
   # lifecycle). Phase-4 plumbing; pinned now so analyzer sees the import.
   flutter_foreground_task: ^9.2.2

@@ -171,7 +171,7 @@ void main() {
             },
           ],
         });
-        final result = await store.importFromJson(envelope);
+        final result = await store.applyParsedImport(ProfilesStore.parseImport(envelope));
         expect(result.updated, 1);
 
         final loaded = await store.load();

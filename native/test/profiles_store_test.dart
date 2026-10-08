@@ -2,8 +2,8 @@
 //
 // Covers:
 //   - load/save round-trip preserves identity + theme/color
-//   - importFromJson with the PWA's envelope shape
-//   - importFromJson with the legacy bare-array shape (forward-compat)
+//   - parseImport + applyParsedImport (the import dialog's path) with the PWA's envelope shape
+//   - parseImport + applyParsedImport (the import dialog's path) with the legacy bare-array shape (forward-compat)
 //   - dedupe on (host:port:username)
 //   - invalid JSON / wrong shape returns ImportResult with errors, no crash
 //   - rejects unknown export version
@@ -174,7 +174,7 @@ void main() {
     });
   });
 
-  group('ProfilesStore.importFromJson — PWA envelope shape', () {
+  group('ProfilesStore parseImport + applyParsedImport — PWA envelope shape', () {
     // A realistic export captured from the PWA's exportProfilesJson(). The
     // native client MUST parse this without changes; it's the contract.
     const pwaExportFixture = '''
@@ -203,7 +203,7 @@ void main() {
 
     test('imports both profiles from a fresh store', () async {
       final store = ProfilesStore();
-      final result = await store.importFromJson(pwaExportFixture);
+      final result = await store.applyParsedImport(ProfilesStore.parseImport(pwaExportFixture));
       expect(result.added, 2);
       expect(result.skipped, 0);
       expect(result.errors, isEmpty);
@@ -225,7 +225,7 @@ void main() {
           port: 22, username: 'mfrazier',
         ),
       ]);
-      final result = await store.importFromJson(pwaExportFixture);
+      final result = await store.applyParsedImport(ProfilesStore.parseImport(pwaExportFixture));
       expect(result.added, 1, reason: 'only "Build box" is new');
       expect(result.updated, 1, reason: 'nas already exists → upsert, not skip');
       expect(result.skipped, 0);
@@ -245,7 +245,7 @@ void main() {
       const future = '''
 { "version": 99, "exportedAt": "x", "profiles": [] }
 ''';
-      final result = await store.importFromJson(future);
+      final result = await store.applyParsedImport(ProfilesStore.parseImport(future));
       expect(result.added, 0);
       expect(result.errors, hasLength(1));
       expect(result.errors.first, contains('Unsupported export version'));
@@ -278,7 +278,7 @@ void main() {
   ]
 }
 ''';
-      final result = await store.importFromJson(keyAuthExport);
+      final result = await store.applyParsedImport(ProfilesStore.parseImport(keyAuthExport));
       expect(result.added, 1);
       expect(result.errors, isEmpty);
 
@@ -320,7 +320,7 @@ void main() {
   ]
 }
 ''';
-      final result = await store.importFromJson(keyAuthExport);
+      final result = await store.applyParsedImport(ProfilesStore.parseImport(keyAuthExport));
       expect(result.added, 0, reason: 'identity already existed');
       expect(result.updated, 1, reason: 'upserted in place');
 
@@ -335,7 +335,7 @@ void main() {
     });
   });
 
-  group('ProfilesStore.importFromJson — robustness', () {
+  group('ProfilesStore parseImport + applyParsedImport — robustness', () {
     test('accepts a bare-array (legacy #419) export shape', () async {
       // The PWA's pre-#501 `exportProfilesJSON()` emits a bare array.
       // Forward-compat: the native client should accept it.
@@ -346,14 +346,14 @@ void main() {
 ]
 ''';
       final store = ProfilesStore();
-      final result = await store.importFromJson(legacy);
+      final result = await store.applyParsedImport(ProfilesStore.parseImport(legacy));
       expect(result.added, 1);
       expect(result.errors, isEmpty);
     });
 
     test('returns errors (no throw) on invalid JSON', () async {
       final store = ProfilesStore();
-      final result = await store.importFromJson('not json at all');
+      final result = await store.applyParsedImport(ProfilesStore.parseImport('not json at all'));
       expect(result.added, 0);
       expect(result.errors, hasLength(1));
       expect(result.errors.first.toLowerCase(), contains('json'));
@@ -365,7 +365,7 @@ void main() {
         () async {
       final store = ProfilesStore();
       const wrong = '{ "version": 1, "junk": true }';
-      final result = await store.importFromJson(wrong);
+      final result = await store.applyParsedImport(ProfilesStore.parseImport(wrong));
       expect(result.added, 0);
       expect(result.errors, hasLength(1));
     });
@@ -381,7 +381,7 @@ void main() {
   ]
 }
 ''';
-      final result = await store.importFromJson(mixed);
+      final result = await store.applyParsedImport(ProfilesStore.parseImport(mixed));
       expect(result.added, 1);
       expect(result.errors, hasLength(1));
       final loaded = await store.load();
@@ -408,7 +408,7 @@ void main() {
   ]
 }
 ''';
-      final result = await store.importFromJson(sneaky);
+      final result = await store.applyParsedImport(ProfilesStore.parseImport(sneaky));
       expect(result.added, 1);
       final loaded = await store.load();
       final stored = loaded.single.toJson();
@@ -738,7 +738,7 @@ void main() {
   ]
 }
 ''';
-      final result = await store.importFromJson(attackerImport);
+      final result = await store.applyParsedImport(ProfilesStore.parseImport(attackerImport));
       expect(result.added, 1);
 
       final loaded = await store.load();
@@ -775,7 +775,7 @@ void main() {
   ]
 }
 ''';
-      final result = await store.importFromJson(evil);
+      final result = await store.applyParsedImport(ProfilesStore.parseImport(evil));
       expect(result.added, 1);
 
       final loaded = await store.load();
@@ -829,7 +829,7 @@ void main() {
   ]
 }
 ''';
-      final result = await store.importFromJson(colliding);
+      final result = await store.applyParsedImport(ProfilesStore.parseImport(colliding));
       expect(result.updated, 1);
       expect(result.added, 0);
 

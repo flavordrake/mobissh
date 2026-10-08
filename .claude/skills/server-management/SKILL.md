@@ -67,7 +67,7 @@ scripts/server-ctl.sh restart   # force restart
 | `PORT` | 8081 | Server listen port |
 | `TS_AUTHKEY` | (none) | Tailscale auth key for container |
 | `TS_HOSTNAME` | mobissh | Tailscale hostname |
-| `TS_SERVE` | 1 | Enable tailscale serve (skips auth in container) |
+| `TS_SERVE_PORT` | 443 | External HTTPS port for `tailscale serve` |
 
 ## Test sshd container
 

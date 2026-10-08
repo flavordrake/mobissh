@@ -1,7 +1,7 @@
 {
   "name": "mobissh-server",
   "version": "1.3.0",
-  "description": "MobiSSH companion server: install page, native artifacts, feedback relay, approval bridge",
+  "description": "MobiSSH companion server: install page, native artifacts, feedback relay",
   "license": "MIT",
   "main": "index.js",
   "scripts": {

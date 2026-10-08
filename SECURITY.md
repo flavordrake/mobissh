@@ -25,11 +25,11 @@ Details for each, and which builds include them, are in [developer.md](developer
 
 ## The companion server
 
-`server/index.js` serves the install page, the published builds and the update manifest, relays bug reports, and hosts the Claude Code approval bridge. It never sees SSH traffic.
+`server/index.js` serves the install page, the published builds and the update manifest, and relays bug reports. It never sees SSH traffic.
 
 - Static responses carry `Cache-Control: no-store` and a restrictive CSP (`script-src 'self'`, `frame-ancestors 'none'`).
-- The feedback routes require the `X-MobiSSH-Key` header and are rate limited (`server/feedback-guard.js`).
-- The approval hook (`hooks/mobissh-bridge.sh`) fails open: when the server is unreachable, or no client is listening, it answers with the configured default mode, which is `allow` unless `.approval-mode` says otherwise. Do not rely on it as a security control.
+- The feedback routes require the `X-MobiSSH-Key` header, are rate limited per client (never keyed on `X-Forwarded-For`), are capped in size, and share a rolling byte budget (`server/feedback-guard.js`).
+- The install page's form route, which adds the server's own key, accepts only a same-origin `application/json` POST.
 - Access control is the network layer: run it on a tailnet, not on the open internet.
 
 ## Threat model

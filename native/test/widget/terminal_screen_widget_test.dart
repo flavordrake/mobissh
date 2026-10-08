@@ -16,11 +16,10 @@ import 'package:mobissh/services/task_ssh_gateway.dart';
 import 'package:mobissh/ssh/ssh_connect_params.dart';
 import 'package:mobissh/state/session_host_providers.dart';
 import 'package:mobissh/state/sessions.dart';
-import 'package:mobissh/state/terminal_backend.dart';
 import 'package:mobissh/state/terminal_providers.dart';
+import 'package:mobissh/ui/ghostty_terminal_view.dart';
 import 'package:mobissh/ui/terminal_screen.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:xterm/xterm.dart';
 
 import '../support/fake_ssh_shell_transport.dart';
 
@@ -40,11 +39,6 @@ Future<({SessionEntry entry, ProviderContainer container})> _setupSingleSession(
       taskSshGatewayProvider.overrideWithValue(pair.uiSide),
       sshShellOpenerProvider.overrideWithValue(
         (ref, sessionId, terminal) async => transport,
-      ),
-      // Ghostty is the default since #725; this file asserts the xterm
-      // TerminalView mounts (flterm can't paint headless), so pin xterm.
-      terminalBackendProvider.overrideWith(
-        (ref) => TerminalBackendNotifier()..set(TerminalBackend.xterm),
       ),
     ],
   );
@@ -91,14 +85,16 @@ void main() {
   });
 
   group('TerminalScreen', () {
-    testWidgets('renders a TerminalView', (tester) async {
+    // #1261: the xterm.dart fallback and its backend setting are gone; the
+    // session body always mounts the flterm (libghostty) view.
+    testWidgets('renders the ghostty terminal view', (tester) async {
       final transport = FakeSshShellTransport();
       addTearDown(transport.close);
       final ({SessionEntry entry, ProviderContainer container}) setup =
           await _setupSingleSession(tester, transport);
       addTearDown(setup.container.dispose);
 
-      expect(find.byType(TerminalView), findsWidgets);
+      expect(find.byType(GhosttyTerminalView), findsOneWidget);
     });
 
     testWidgets('shows host@user:port label on the bottom session bar', (

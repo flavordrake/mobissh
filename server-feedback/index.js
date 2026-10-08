@@ -12,8 +12,6 @@
  *
  * Routes:
  *   POST /api/bug-report
- *   POST /api/drop-telemetry
- *   POST /api/gesture-telemetry
  *   POST /api/native-crash
  *   GET  /healthz              — liveness + config for feedback-ctl.sh
  *
@@ -79,6 +77,7 @@ const server = http.createServer(async (req, res) => {
       }
       return;
     }
+    guard.recordUploadBytes(Buffer.byteLength(body));
     const result = store.handleFeedbackRequest(route, body, UPLOADS_DIR);
     res.writeHead(result.status, { 'Content-Type': 'application/json' });
     res.end(result.body);

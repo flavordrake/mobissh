@@ -61,7 +61,6 @@ const Set<String> _allowedSettingKeys = {
   'mobissh.ui.fontSize', // fontSizePrefKey (double, 8..32)
   'mobissh.ui.fontFamily', // fontFamilyPrefKey (bundled family name)
   'mobissh.ui.terminalThemeIndex', // terminalThemePrefKey (int, reader clamps)
-  'mobissh.ui.terminalBackend', // terminalBackendPrefKey (enum name)
   'mobissh.ui.composeBarVisible', // composeBarVisiblePrefKey (bool)
   'mobissh.keepalive.enabled', // keepaliveEnabledPrefKey (bool)
   'mobissh.ui.tmuxControlMode', // tmuxControlModePrefKey (bool)
@@ -80,9 +79,6 @@ const Set<String> _knownFontFamilies = {
   'Cousine',
   'IosevkaTerm',
 };
-
-/// Terminal backend ids — TerminalBackend.values names.
-const Set<String> _knownTerminalBackends = {'xterm', 'ghostty'};
 
 bool _isJsonObjectString(Object? v) {
   if (v is! String || v.isEmpty) return false;
@@ -116,11 +112,6 @@ Future<void> Function()? _stageSetting(
     case 'mobissh.ui.terminalThemeIndex':
       if (value is int && value >= 0) {
         return () => prefs.setInt(key, value);
-      }
-      return null;
-    case 'mobissh.ui.terminalBackend':
-      if (value is String && _knownTerminalBackends.contains(value)) {
-        return () => prefs.setString(key, value);
       }
       return null;
     case 'mobissh.ui.composeBarVisible':

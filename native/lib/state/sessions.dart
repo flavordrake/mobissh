@@ -30,7 +30,6 @@ import '../ssh/jump_host.dart';
 import '../ssh/ssh_connect_params.dart';
 import '../ssh/ssh_session.dart';
 import '../ssh/ssh_session_proxy.dart';
-import '../ui/terminal_mouse_handler.dart';
 import '../storage/profiles_store.dart';
 import 'keepalive_providers.dart';
 import 'profiles_providers.dart';
@@ -229,11 +228,6 @@ class SessionsNotifier extends Notifier<SessionsState> {
     final proxy = SshSessionProxy(sessionId: id, gateway: gateway);
     ctrace('ui.sessions', 'created proxy + gateway for id=$id');
     final terminal = Terminal(maxLines: 5000);
-    // #617: correct xterm-4.0.0's broken mouse-wheel SGR codes (it emits
-    // button 68/69 instead of the canonical 64/65, which tmux/less ignore) so
-    // a vertical touch-drag scrolls back through tmux history in the alternate
-    // buffer. Surgical override — non-wheel events still use the library path.
-    terminal.mouseHandler = const WheelFixMouseHandler();
     final entry = SessionEntry(
       id: id,
       host: params.host,

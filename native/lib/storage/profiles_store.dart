@@ -996,30 +996,6 @@ class ProfilesStore {
     );
   }
 
-  /// Backwards-compatible single-shot importer. Accepts the
-  /// `{ version, profiles[] }` envelope or a legacy bare array, ignores
-  /// any vault payload (for that, the UI calls [parseImport] +
-  /// [applyParsedImport] with a password).
-  ///
-  /// Returns an [ImportResult] enumerating added/skipped/errors. Does NOT
-  /// throw on malformed input — that's a user-recoverable error reported via
-  /// the result.
-  Future<ImportResult> importFromJson(String json) async {
-    final parsed = parseImport(json);
-    if (parsed.errors.isNotEmpty && parsed.profileEntries.isEmpty) {
-      return ImportResult(errors: parsed.errors);
-    }
-    // Without a password we cannot decrypt; the UI is expected to use the
-    // two-stage path for vault envelopes. Re-emit a non-vault parsed import
-    // so the existing call sites keep their behavior.
-    return applyParsedImport(
-      ParsedImport(
-        profileEntries: parsed.profileEntries,
-        errors: parsed.errors,
-      ),
-    );
-  }
-
   /// Upsert a single profile by identity (#579 profile editor).
   ///
   /// When [previousIdentityKey] is supplied and differs from the incoming

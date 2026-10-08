@@ -68,6 +68,10 @@ include: screenshot/frames as base64 data URLs, traces). Custom metadata carries
 
 ## Contract
 - `POST` JSON, header `X-MobiSSH-Key: <FEEDBACK_KEY>`.
-- 25 MB body cap. Returns `200 {ok,id}`; `403` bad/missing key; `413` too large;
-  `400` invalid JSON.
+- 25 MB body cap, enforced while streaming. 10 reports a minute per IP
+  (`CF-Connecting-IP`), held in memory per Worker isolate, so best-effort.
+  Returns `200 {ok,id}`; `403` bad/missing key; `429` rate limited; `413` too
+  large; `400` invalid JSON.
+- Retention: no automatic expiry is configured on the bucket; the privacy page
+  says so (#1274). Delete reports by hand.
 - Stores to `reports/<date>/<ts>-<uuid>.json`; optional ntfy ping on receipt.

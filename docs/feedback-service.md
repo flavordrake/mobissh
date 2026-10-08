@@ -13,9 +13,7 @@ commands, (4) the operator handoff for a PVE LXC deploy.
 | Route | Producer(s) | Payload | Response |
 |---|---|---|---|
 | `POST /api/bug-report` | native `feedback_overlay.dart` (in-app feedback, #661/#967), install-page form `public/native-feedback.js` | one JSON body: `title`, `comment` (full untruncated note), `logs`, `screenshot` (base64 data URL), `frames[]` (repro burst), `connectLog[]`, `gestureLog[]`, `byteTrace[]` + `scrollTrace[]` + `grid` (#790 replay), `sentSgrTrace[]` (#793), `userAgent`, `url`, `version` | `200 {ok:true,saved:true}`; `400 {"error":"invalid json"}` |
-| `POST /api/drop-telemetry` | (retired with the PWA, #1205 — endpoint kept, no producer) | JSON: `kind`, `reason`, `sessionId`, `host`, `connectLog[]`, `gestureLog[]`, meta | `200 {ok:true,stamp}`; `400` |
-| `POST /api/gesture-telemetry` | (retired with the PWA, #1205 — endpoint kept, no producer) | JSON: `reason`, `eventCount`, `log[]`, meta | `200 {ok:true,stamp}`; `400` |
-| `POST /api/native-crash` | native `crash_reporter.dart` (Dart + Kotlin uncaught handlers, #501), `public/termux/mobissh-logcat.sh` | one crash JSON (or arbitrary raw text) | `200 {ok:true,path}` / `{ok:true,raw:true,path}`; `413` over 1MB; `500` on write failure |
+| `POST /api/native-crash` | native `crash_reporter.dart` (Dart + Kotlin uncaught handlers, #501) | one crash JSON (or arbitrary raw text) | `200 {ok:true,path}` / `{ok:true,raw:true,path}`; `413` over 1MB; `500` on write failure |
 
 All producers post to the single Tailscale endpoint
 `https://mobissh.tailbe5094.ts.net/api/...` (native default is compile-time:
@@ -40,10 +38,6 @@ filesystem — that is the filename sanitization.
 <ts>-bug-report.gesture-log.json     24h gesture events
 <ts>-bug-report.byte-trace.json      {grid, byteTrace[], scrollTrace[]} (#790 replay harness)
 <ts>-bug-report.sent-sgr-trace.json  {grid, sentSgrTrace[]} (#793)
-<stamp>-drop-telemetry.json          meta
-<stamp>-drop-telemetry.connect-log.json / .gesture-log.json
-<stamp>-gesture-telemetry.json       meta
-<stamp>-gesture-telemetry.gesture-log.json
 <stamp>-native-crash.json            parsed crash
 <stamp>-native-crash.raw             non-JSON crash body (never lost)
 ```
@@ -51,7 +45,6 @@ filesystem — that is the filename sanitization.
 ### Size caps (preserved verbatim in feedback-store.js)
 
 - `/api/native-crash`: request body capped at 1MB → `413` (`MAX_CRASH_BYTES`).
-- gesture-telemetry log sidecar: >1MB → keep newest half (`MAX_GESTURE_LOG_BYTES`).
 - bug-report frames: max 120 (`MAX_FRAMES`).
 - byte/scroll/sent-SGR traces: last 8192 events each (server-side backstop; the
   client bounds the rings).
@@ -74,13 +67,10 @@ bind-mounted into every container that touches it:
 
 Consumers (all read the fd-dev path; none change):
 
-- `scripts/watch-bug-reports.sh` — polls `*-bug-report.json` / `*-drop-telemetry.json`
+- `scripts/watch-bug-reports.sh` — polls `*-bug-report.json`
 - `scripts/assemble-repro.sh` — `*-bug-report.frame-%03d.png` → mp4/gif
 - replay harness / `scripts/paint-replay.sh` — `*-bug-report.byte-trace.json`
 - `scripts/pull-feedback.sh` — docker-cp fallback from prod (belt-and-braces; still works)
-- SSE events (`bug-report`, `drop-telemetry`, …): emitted by prod's LOCAL path
-  only; audit found NO client listens to them, so the proxied path drops them
-  (prod still logs `[feedback-proxy] ...` per relayed upload).
 
 ## 2. Extracted architecture
 
@@ -114,14 +104,20 @@ mobissh-prod server/index.js
 - Security: nothing is exposed beyond the tailnet. The service listens only on
   the internal `mobissh` bridge network; the app still talks to the single
   Tailscale endpoint. Every upload must carry the shared `X-MobiSSH-Key`
-  header and is rate limited per IP (`server/feedback-guard.js`, #1115). Only
-  the in-app feedback overlay sends the key today; the crash reporter, the
-  install-page form and the termux uploader do not, so they are rejected (#1243).
+  header and is rate limited per client (`server/feedback-guard.js`, #1115):
+  the socket address, or the `Tailscale-User-Login` that `tailscale serve` sets
+  when the request comes from loopback; never `X-Forwarded-For` (#1250). All
+  accepted uploads share a rolling byte budget (`MOBISSH_FEEDBACK_BUDGET_BYTES`,
+  default 1 GB per `MOBISSH_FEEDBACK_BUDGET_WINDOW_MS`, default a day) → `429`.
+  The install-page form posts to `/api/install-feedback`, which adds the
+  server's key and so accepts only a same-origin `application/json` POST (#1250).
+  The PWA's `/api/drop-telemetry` and `/api/gesture-telemetry` were removed in
+  #1261 (no upload since 2026-06-04).
 
 ### Tests
 
 - `server-feedback/test.js`, run by `scripts/test-infra.sh` in fast gate 0:
-  round-trip of all four routes against a temp dir with the key set, exact
+  round-trip of both routes against a temp dir with the key set, exact
   filename contract, 1MB crash cap, raw-crash preservation, retention sweep,
   healthz. The proxy pass-through and fail-open fallback in `server/index.js`
   have no test since #1205.

@@ -27,8 +27,8 @@ User-facing features: `README.md`. Build, test, server, diagnostics and what is 
 - **`native/`** -- the Flutter app: the product. `native/third_party/flterm` is the
   vendored terminal fork; rendering goes through libghostty via FFI.
 - **`server/index.js`** -- single Node.js process on port 8081: static files, the native
-  install page + artifacts, the bug-report/telemetry relay, and the Claude Code approval
-  bridge (`/api/approval*` + the `/events` SSE channel).
+  install page + artifacts, and the bug-report/crash relay. The Claude Code approval
+  bridge was removed in #1261.
 - **`server-feedback/`** -- the feedback-service container `server/index.js` relays to.
 - **`public/`** -- served verbatim; no build step.
   - `native.html` -- generated install page (gitignored)

@@ -139,37 +139,6 @@ test('bug-report rejects invalid json with 400', async () => {
   assert.deepEqual(JSON.parse(res.body), { error: 'invalid json' });
 });
 
-test('drop-telemetry round-trip', async () => {
-  const res = await post('/api/drop-telemetry', JSON.stringify({
-    kind: 'drop-recovery',
-    reason: 'ws-close',
-    host: 'fd-dev',
-    connectLog: [{ t: 1, ev: 'reconnect' }],
-  }));
-  assert.equal(res.status, 200);
-  const j = JSON.parse(res.body);
-  assert.equal(j.ok, true);
-  assert.ok(j.stamp);
-  const meta = JSON.parse(fs.readFileSync(path.join(TMP_UPLOADS, `${j.stamp}-drop-telemetry.json`), 'utf8'));
-  assert.equal(meta.reason, 'ws-close');
-  assert.equal(meta.host, 'fd-dev');
-  assert.ok(fs.existsSync(path.join(TMP_UPLOADS, `${j.stamp}-drop-telemetry.connect-log.json`)));
-});
-
-test('gesture-telemetry round-trip', async () => {
-  const res = await post('/api/gesture-telemetry', JSON.stringify({
-    reason: 'ime-anomaly',
-    eventCount: 2,
-    log: [{ t: 1 }, { t: 2 }],
-  }));
-  assert.equal(res.status, 200);
-  const j = JSON.parse(res.body);
-  const meta = JSON.parse(fs.readFileSync(path.join(TMP_UPLOADS, `${j.stamp}-gesture-telemetry.json`), 'utf8'));
-  assert.equal(meta.reason, 'ime-anomaly');
-  assert.equal(meta.logEventCount, 2);
-  assert.ok(fs.existsSync(path.join(TMP_UPLOADS, `${j.stamp}-gesture-telemetry.gesture-log.json`)));
-});
-
 test('native-crash JSON body persists as .json', async () => {
   const res = await post('/api/native-crash', JSON.stringify({ kind: 'dart', error: 'boom' }));
   assert.equal(res.status, 200);
@@ -202,6 +171,14 @@ test('native-crash over 1MB answers 413', async () => {
 test('unknown route answers 404', async () => {
   const res = await post('/api/nope', '{}');
   assert.equal(res.status, 404);
+});
+
+test('#1261: the retired PWA telemetry routes answer 404 and write nothing', async () => {
+  for (const route of ['/api/drop-telemetry', '/api/gesture-telemetry']) {
+    const res = await post(route, JSON.stringify({ reason: 'r' }));
+    assert.equal(res.status, 404, route);
+  }
+  assert.equal(uploadsWith('-telemetry.json').length, 0);
 });
 
 test('retention sweep deletes only files older than the knob', () => {

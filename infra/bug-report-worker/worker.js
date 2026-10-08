@@ -16,6 +16,55 @@
 
 const MAX_BYTES = 25 * 1024 * 1024; // 25 MB
 
+// #1250: per-IP ingest rate limit. The writer key ships inside the public APK,
+// so the key alone does not stop one client flooding R2. In-memory and per
+// isolate, so it is best-effort: it stops a single client hammering one
+// isolate, not a distributed flood (a Cloudflare rate-limiting rule is the
+// stronger, account-side control). Rejected: Durable Objects, which add a
+// paid binding and a deploy step for a low-volume endpoint.
+const RATE_MAX = 10;
+const RATE_WINDOW_MS = 60 * 1000;
+const rateHits = new Map();
+
+function rateLimited(ip, now = Date.now()) {
+  const hits = (rateHits.get(ip) || []).filter((t) => t > now - RATE_WINDOW_MS);
+  const limited = hits.length >= RATE_MAX;
+  if (!limited) hits.push(now);
+  rateHits.set(ip, hits);
+  if (rateHits.size > 4096) {
+    for (const [k, v] of rateHits) {
+      if (v.every((t) => t <= now - RATE_WINDOW_MS)) rateHits.delete(k);
+    }
+  }
+  return limited;
+}
+
+// Read the body as UTF-8, giving up as soon as it passes MAX_BYTES, so a body
+// without (or lying about) Content-Length is never buffered whole (#1250).
+async function readCapped(request) {
+  if (!request.body) return '';
+  const reader = request.body.getReader();
+  const chunks = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > MAX_BYTES) {
+      await reader.cancel();
+      return null;
+    }
+    chunks.push(value);
+  }
+  const all = new Uint8Array(total);
+  let off = 0;
+  for (const c of chunks) {
+    all.set(c, off);
+    off += c.byteLength;
+  }
+  return new TextDecoder().decode(all);
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -42,11 +91,14 @@ async function ingest(request, env) {
   if (!env.FEEDBACK_KEY || request.headers.get('X-MobiSSH-Key') !== env.FEEDBACK_KEY) {
     return json({ error: 'forbidden' }, 403);
   }
+  if (rateLimited(request.headers.get('CF-Connecting-IP') || 'unknown')) {
+    return json({ error: 'rate limit exceeded' }, 429);
+  }
   const len = Number(request.headers.get('Content-Length') || '0');
   if (len > MAX_BYTES) return json({ error: 'payload too large' }, 413);
 
-  const body = await request.text();
-  if (body.length > MAX_BYTES) return json({ error: 'payload too large' }, 413);
+  const body = await readCapped(request);
+  if (body === null) return json({ error: 'payload too large' }, 413);
 
   let parsed;
   try {
@@ -206,7 +258,7 @@ const PRIVACY_HTML = `<!doctype html><meta charset="utf-8"><meta name="viewport"
 <style>body{font:16px/1.5 system-ui,sans-serif;margin:2rem auto;max-width:760px;padding:0 1rem;color:#222}
 h1{font-size:1.6rem}h2{font-size:1.15rem;margin-top:1.6rem}code{background:#f0f0f0;padding:1px 4px;border-radius:4px}</style>
 <h1>MobiSSH — Privacy Policy</h1>
-<p><b>Effective date:</b> 2026-07-02 · <b>App:</b> MobiSSH (<code>com.flavordrake.mobissh</code>) · <b>Contact:</b> flavordrake@gmail.com</p>
+<p><b>Effective date:</b> 2026-10-05 · <b>App:</b> MobiSSH (<code>com.flavordrake.mobissh</code>) · <b>Contact:</b> flavordrake@gmail.com</p>
 <p><b>Your data is yours.</b> MobiSSH is an SSH/SFTP client. Your credentials and your terminal
 sessions stay on your device and flow directly between your device and the servers you connect to.
 The developer's systems are not in that path and never receive your session content — except the one
@@ -227,7 +279,8 @@ may include a screenshot/frames, recent terminal I/O and diagnostic logs, your d
 and app version. Because images capture your screen, they may contain session content — which is why you
 review them. An automated pass also redacts secret-looking text from logs (best-effort, not a guarantee).</p>
 <p><b>Purpose:</b> only to diagnose the reported bug. <b>Recipient:</b> the developer only; not shared or
-sold. <b>Retention:</b> kept only as long as needed and no more than <b>30 days</b>, then deleted.
+sold. <b>Retention:</b> there is <b>no automatic deletion</b>. Reports are stored in a
+developer-owned storage bucket with no automatic expiry, and are kept until the developer deletes them.
 <b>Deletion:</b> email flavordrake@gmail.com to have a report you sent deleted.</p>
 <h2>4. Permissions</h2>
 <p>Foreground service + notifications (keep your SSH session alive in the background and show its status);

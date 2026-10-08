@@ -164,7 +164,7 @@ For MobiSSH, the gap matters for:
 
 | Aspect | Android | iOS (proposed) |
 |--------|---------|----------------|
-| Setup script | `scripts/setup-avd.sh` | `scripts/setup-ios-sim.sh` |
+| Setup script | `scripts/setup-avd.sh` | none (a draft was removed in #1261) |
 | Emulator tool | `emulator` (Android SDK) | `xcrun simctl` (Xcode) |
 | Device profile | Pixel 7, API 35 | iPhone 15, iOS 17.4 |
 | Browser | Chrome (Play Store) | Safari (built-in) |
@@ -225,6 +225,6 @@ This is a hard constraint with no workarounds:
 
 1. iOS Simulator testing is feasible but macOS-only, making it a complement to our Linux-based CI.
 2. The Appium + XCUITest approach mirrors our Android setup closely, minimizing new code.
-3. `scripts/setup-ios-sim.sh` (draft) captures the key CLI commands for macOS setup.
+3. A draft setup script captured the key CLI commands for macOS setup; it was removed unused in #1261 (recover it from git history).
 4. Priority: set up local macOS testing first, defer CI integration until test volume justifies the cost.
 5. BrowserStack (already partially configured in `browserstack.yml`) is the pragmatic path for cross-platform CI.

@@ -17,7 +17,7 @@ duplicates; its code lives only in git history.
   - `platform/`, `util/` — desktop glue, small helpers
 - `native/third_party/flterm` — vendored terminal widget fork; rendering goes through libghostty via FFI
 - `native/test/` — headless unit + widget tests (fast gate); `native/integration_test/` — on-emulator tests (see `.claude/rules/testing.md`)
-- `server/index.js` — Node.js on port 8081: static install page + APK/macOS artifacts, bug-report/telemetry relay, Claude Code approval bridge. It does not carry SSH traffic.
+- `server/index.js` — Node.js on port 8081: static install page + APK/macOS artifacts, bug-report/crash relay. It does not carry SSH traffic.
 - `server-feedback/` — the feedback service the server relays to
 - `test/infra/` — node:test coverage of the non-Flutter infrastructure
 

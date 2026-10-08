@@ -4,5 +4,5 @@
 - If secure storage is unavailable, **block the feature**; do not fall back to plaintext storage with a warning.
 - Encrypted backup (`native/lib/storage/backup.dart`) is AES-256-GCM with an Argon2id key from a user passphrase. Never write an unencrypted export of secrets.
 - No secrets in code.
-- `local_auth` is declared in `native/pubspec.yaml` but not used: there is no biometric gate today. Do not document one.
+- There is no biometric gate. The unused `local_auth` dependency was removed in #1261. Do not document one.
 - Keep `Cache-Control: no-store` on all static responses from `server/index.js`. No stale cache.
