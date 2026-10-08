@@ -8,12 +8,12 @@
 //     removed items (the #971 subtitle, the terminal-engine selector) are gone.
 //   - The battery row renders only while the app is NOT yet exempt.
 //   - Diagnostics sit in a COLLAPSED "Advanced" expander. The experimental
-//     items (tmux control mode, Force upload, Connection audit) are absent
-//     until "Show experimental settings" is on.
-//   - A hidden experimental setting that is ON keeps its value and effect, and
-//     Advanced says so ("1 experimental setting is on").
+//     items (Force upload, Connection audit) are absent until "Show
+//     experimental settings" is on.
+//   - The tmux control-mode setting is gone (#1285), even when the old pref is
+//     still stored ON.
 //   - Reset confirms, restores defaults (incl. the flag), and its copy no
-//     longer mentions the retired terminal engine.
+//     longer mentions the retired terminal engine or tmux control mode.
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -26,7 +26,6 @@ import 'package:mobissh/state/detection_providers.dart';
 import 'package:mobissh/state/detection_style_providers.dart';
 import 'package:mobissh/state/feature_flags_providers.dart';
 import 'package:mobissh/state/keepalive_providers.dart';
-import 'package:mobissh/state/tmux_control_mode_setting.dart';
 import 'package:mobissh/state/ui_prefs_providers.dart';
 import 'package:mobissh/ui/detection_lab_screen.dart';
 import 'package:mobissh/ui/settings_screen.dart';
@@ -89,7 +88,6 @@ Future<void> _expandAdvanced(WidgetTester tester) async {
 }
 
 const _experimentalKeys = [
-  'tmux-control-mode-toggle',
   'force-upload-button',
   'connection-audit-button',
 ];
@@ -232,52 +230,33 @@ void main() {
     expect(prefs.getString(featureFlagsPrefKey), contains('"showExperimental":true'));
   });
 
-  testWidgets('the page constructs the tmux setting provider whatever the '
-      'flag (connect reads its hydrated global)', (tester) async {
+  // #1285: the tmux control-mode setting is removed. A device that still holds
+  // the old pref (ON) shows no toggle, no "experimental setting is on" note and
+  // no mention of control mode, with experimental settings shown or hidden.
+  testWidgets('tmux control mode is gone, even with the old pref stored ON', (
+    tester,
+  ) async {
     for (final show in const [false, true]) {
       SharedPreferences.setMockInitialValues(<String, Object>{
+        'mobissh.ui.tmuxControlMode': true,
         featureFlagsPrefKey: '{"v":1,"showExperimental":$show}',
       });
       final container = _container();
       await _pumpPage(tester, container);
-      expect(container.exists(tmuxControlModeProvider), isTrue,
-          reason: 'showExperimental=$show, Advanced collapsed');
+      await _expandAdvanced(tester);
+
+      expect(find.byKey(const ValueKey('tmux-control-mode-toggle')),
+          findsNothing, reason: 'showExperimental=$show');
+      expect(find.byKey(const ValueKey('experimental-on-note')), findsNothing,
+          reason: 'showExperimental=$show');
+      expect(find.textContaining(RegExp(r'experimental settings? (is|are) on')),
+          findsNothing,
+          reason: 'showExperimental=$show');
+      expect(find.textContaining(RegExp('control mode', caseSensitive: false)),
+          findsNothing, reason: 'showExperimental=$show');
+      // Fresh tree for the next pass, so Advanced starts collapsed again.
+      await tester.pumpWidget(const SizedBox());
     }
-  });
-
-  testWidgets('a hidden setting that is ON keeps working and is announced', (
-    tester,
-  ) async {
-    SharedPreferences.setMockInitialValues(<String, Object>{
-      tmuxControlModePrefKey: true,
-    });
-    final container = _container();
-    await _pumpPage(tester, container);
-
-    // Hiding never changes the value.
-    expect(container.read(tmuxControlModeProvider), isTrue);
-    expect(container.read(featureFlagsProvider).showExperimental, isFalse);
-
-    // Announced even while Advanced is collapsed.
-    expect(find.text('1 experimental setting is on'), findsWidgets);
-
-    await _expandAdvanced(tester);
-    expect(
-      find.byKey(const ValueKey('tmux-control-mode-toggle')),
-      findsNothing,
-    );
-    final note = find.byKey(const ValueKey('experimental-on-note'));
-    expect(note, findsOneWidget);
-
-    // Tapping the note reveals the experimental items.
-    await tester.tap(note);
-    await _pumpFrames(tester);
-    expect(
-      find.byKey(const ValueKey('tmux-control-mode-toggle')),
-      findsOneWidget,
-    );
-    expect(container.read(tmuxControlModeProvider), isTrue);
-    expect(find.byKey(const ValueKey('experimental-on-note')), findsNothing);
   });
 
   testWidgets('Reset settings confirms, restores defaults and the flag', (
@@ -300,6 +279,11 @@ void main() {
       find.descendant(of: dialog, matching: find.textContaining('engine')),
       findsNothing,
       reason: 'the terminal-engine selector was retired (#966)',
+    );
+    expect(
+      find.descendant(of: dialog, matching: find.textContaining('tmux')),
+      findsNothing,
+      reason: 'tmux control mode was removed (#1285)',
     );
 
     await tester.tap(find.byKey(const ValueKey('settings-reset-confirm')));

@@ -187,10 +187,9 @@ import '../services/link_browser_router.dart';
 import '../services/path_verifier.dart';
 import '../services/session_cwd_tracker.dart';
 import '../services/session_messages.dart'
-    show SftpStatResultEvent, SshTaskEvent, TmuxWindowGesture;
+    show SftpStatResultEvent, SshTaskEvent;
 import '../ssh/ssh_session.dart';
 import '../ssh/ssh_session_proxy.dart';
-import '../terminal/tmux_control_mode_flag.dart';
 import '../state/ctrl_modifier_provider.dart';
 import '../state/custom_patterns_providers.dart';
 import '../state/detection_exceptions_providers.dart';
@@ -221,15 +220,6 @@ import 'url_action_overlay.dart';
 /// stock Pixel 9). Flip back to true to restore body selection once the
 /// clipboard write is verified end-to-end.
 const bool kBodyTextSelectionEnabled = false;
-
-/// #906 Stage 2 gate: whether a control-mode vertical swipe drives the tmux
-/// `-CC` scrollback (capture-pane history) instead of the local flterm scroll.
-/// OFF until flterm can RENDER a captured history window — the capture
-/// request→response byte path is proven, but flterm's own scrollback +
-/// follow-to-bottom currently bury the captured rows under the live tail, so
-/// wiring the swipe would FREEZE the screen (worse than the local no-op). Flip
-/// to true once the flterm scrollback-view render lands.
-const bool kControlModeScrollRenders = false;
 
 /// Apply the shared armed keybar Ctrl modifier (#728) to a SOFT-KEYBOARD
 /// keystroke flowing through flterm's `controller.onOutput`.
@@ -1303,10 +1293,9 @@ bool ghosttyTapShouldForwardClick({required bool active}) => active;
 /// past the long-press deadline) resolved as a `longpress-select`, so
 /// `onMouseReport` never ran and no SGR click reached tmux — device telemetry
 /// showed 120 `longpress-select` events and `sentSgrTraceEventCount: 0`. A one-
-/// line status bar has nothing to text-select, and the tap path ALREADY treats
-/// `row >= gridRows` as the status row (control-mode `select-window`), so the
-/// long-press router applies the SAME rule: a press that STARTS on the status
-/// row clicks through. Selection is unchanged everywhere else — a press starting
+/// line status bar has nothing to text-select, so the long-press router treats
+/// `row >= gridRows` as the status row: a press that STARTS on the status row
+/// clicks through. Selection is unchanged everywhere else — a press starting
 /// on a content row still selects, and a body drag that crosses onto the status
 /// row still extends (the decision is made from the START cell). Pure.
 bool ghosttyPressIsStatusRowClick({required int row, required int gridRows}) =>
@@ -1796,45 +1785,12 @@ class GhosttyPointerGestureRouter extends StatefulWidget {
     required this.urlAtCell,
     required this.onUrlTap,
     required this.onUrlLongPress,
-    this.controlModeGestures = false,
-    this.onWindowSwitch,
-    this.onStatusTap,
-    this.onScroll,
     this.geometry = GhosttyGutterGeometry.defaults,
   });
 
   /// #1155 R20: the ONE gutter geometry — a dedicated LEFT column insets the
   /// grid, so the touch→cell map subtracts the same inset.
   final GhosttyGutterGeometry geometry;
-
-  /// #911 Part C: when true (the `tmuxControlMode` flag is ON), window switching
-  /// is driven by REAL tmux control commands ([onWindowSwitch]/[onStatusTap])
-  /// instead of synthesised SGR wheel/click reports at a GUESSED status row — the
-  /// fix for the "swipe did nothing / tap hit the wrong row" bugs. The
-  /// authoritative active window is read back from `%session-window-changed`, so
-  /// the gesture never has to guess geometry. When false (the shipped default) the
-  /// existing scrape + synthesised-SGR path runs UNCHANGED.
-  final bool controlModeGestures;
-
-  /// #911: a horizontal swipe → next/previous window via a real control command.
-  /// Called (instead of [onMouseReport]) only when [controlModeGestures] is true.
-  /// [next] = swipe RIGHT (next-window); false = swipe LEFT (previous-window).
-  final void Function({required bool next})? onWindowSwitch;
-
-  /// #911: a tap on the status-bar ROW → `select-window` for the tapped window
-  /// via a real control command. Carries the 1-based tap [col] and the status
-  /// line width [totalCols] so the host can map col → window with no pixel guess.
-  /// Called (instead of the SGR click) only when [controlModeGestures] is true
-  /// AND the tap landed on the status row.
-  final void Function({required int col, required int totalCols})? onStatusTap;
-
-  /// #906 Stage 2: a vertical swipe → scroll the tmux scrollback via a real
-  /// `capture-pane` history request. Called (INSTEAD of the local [_applyScroll])
-  /// only when [controlModeGestures] is true. [deltaLines] is a signed line delta
-  /// — positive scrolls BACK into history (a downward swipe), negative toward
-  /// live. Control mode gets no `%output` for copy-mode scroll, so the local
-  /// scrollback is near-empty; the host captures the history window instead.
-  final void Function(int deltaLines)? onScroll;
 
   /// Whether to intercept touch (the remote has mouse tracking on).
   final bool active;
@@ -1975,31 +1931,6 @@ class _GhosttyPointerGestureRouterState
     _panDy = 0;
     _axis = GhosttySwipeAxis.none;
     _windowSwitchDx = 0;
-    _scrollAccumPx = 0;
-  }
-
-  /// Whether a vertical swipe drives the tmux `-CC` scrollback (#906 Stage 2)
-  /// instead of the local flterm scroll: only under the control-mode flag with a
-  /// wired [onScroll]. The scrape path (flag OFF) keeps [_applyScroll] unchanged.
-  bool get _useControlScroll =>
-      widget.controlModeGestures && widget.onScroll != null;
-
-  /// Accumulated vertical finger travel (px) not yet converted to whole lines
-  /// (#906 Stage 2). Reset on every pan start.
-  double _scrollAccumPx = 0;
-
-  /// Convert a vertical finger delta to whole tmux line scrolls and emit them via
-  /// [onScroll] (#906 Stage 2). A downward swipe (dy > 0) scrolls BACK into
-  /// history (older); upward scrolls toward live. Sub-cell travel accumulates so
-  /// a slow drag still scrolls once it crosses a full cell height.
-  void _controlScroll(double fingerDy) {
-    final ch = widget.cellHeight;
-    if (ch <= 0) return;
-    _scrollAccumPx += fingerDy;
-    final lines = (_scrollAccumPx / ch).truncate();
-    if (lines == 0) return;
-    _scrollAccumPx -= lines * ch;
-    widget.onScroll!(lines);
   }
 
   void _onPanUpdate(DragUpdateDetails details) {
@@ -2021,8 +1952,6 @@ class _GhosttyPointerGestureRouterState
       // far so the first committed update isn't lost.
       if (_axis == GhosttySwipeAxis.horizontal) {
         _windowSwitchDx = _panDx;
-      } else if (_useControlScroll) {
-        _controlScroll(_panDy); // #906 Stage 2: drive the tmux scrollback
       } else {
         _applyScroll(_panDy);
       }
@@ -2031,8 +1960,6 @@ class _GhosttyPointerGestureRouterState
     // Committed: run ONLY the locked axis; the off-axis component is ignored.
     if (_axis == GhosttySwipeAxis.horizontal) {
       _windowSwitchDx += dx; // accumulate for the on-lift window-switch
-    } else if (_useControlScroll) {
-      _controlScroll(dy); // #906 Stage 2: drive the tmux scrollback
     } else {
       _applyScroll(dy); // drive the local scrollback
     }
@@ -2066,17 +1993,6 @@ class _GhosttyPointerGestureRouterState
       // Committed horizontal but below the window-switch distance — record the
       // (sub-threshold) dx so a device repro shows the swipe was seen.
       _trace('swipe-h', totalDx, 0, null, null, null);
-      return;
-    }
-    // #911 Part C (flag ON): switch windows with a REAL control command
-    // (`next-window`/`previous-window`) over the -CC channel instead of a
-    // synthesised SGR wheel at a GUESSED status row. tmux steps its own active
-    // window and pushes `%session-window-changed` (authoritative → repaint), so
-    // there is no row to guess and the wrong-row bug cannot recur.
-    if (widget.controlModeGestures && widget.onWindowSwitch != null) {
-      final next = decision == GhosttyWindowSwitch.next;
-      _trace('swipe-h', totalDx, 0, null, null, next ? 'next-window' : 'previous-window');
-      widget.onWindowSwitch!(next: next);
       return;
     }
     // #719/#723: target the status row of the rows tmux ACTUALLY HAS — flterm's
@@ -2298,25 +2214,10 @@ class _GhosttyPointerGestureRouterState
 
   /// Forward a CLICK at the (already-computed) 1-based ([col], [row]) cell — the
   /// #693 tap-click path, extracted so a status-row long-press (#971) reuses the
-  /// EXACT same routing. Under the #911 control-mode flag a status-row cell
-  /// drives the REAL `select-window` command (the host maps the column to a
-  /// window from the authoritative ordered list — no pixel/row guessing) and an
-  /// off-status-row cell just focuses; otherwise it synthesises an SGR button-1
-  /// click (`CSI<0;col;rowM` then `…m`) so tmux selects the clicked window/pane.
+  /// EXACT same routing. It synthesises an SGR button-1 click (`CSI<0;col;rowM`
+  /// then `…m`) so tmux selects the clicked window/pane.
   /// [dx]/[dy] and [traceType] label the gesture-log line.
   void _forwardClickAt(int col, int row, double dx, double dy, String traceType) {
-    // #911 Part C (flag ON): a click on the STATUS ROW switches windows via a
-    // REAL `select-window` control command. Off the status row control mode does
-    // not use a synthesised SGR click.
-    if (widget.controlModeGestures && widget.onStatusTap != null) {
-      if (row >= _gridRows) {
-        _trace(traceType, dx, dy, col, row, 'select-window');
-        widget.onStatusTap!(col: col, totalCols: _gridCols);
-      } else {
-        _trace(traceType, dx, dy, col, row, null);
-      }
-      return;
-    }
     final report = ghosttySgrMousePress(col: col, row: row);
     _trace(traceType, dx, dy, col, row, report);
     GhosttySelectionDriver(
@@ -4984,55 +4885,6 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
               // drag) is user input — force the full repaint.
               _forceTerminalRepaint();
             },
-            // #911 Part C: under the control-mode flag, window switching uses REAL
-            // tmux commands over the -CC channel (no synthesised SGR at a guessed
-            // status row). Flag OFF leaves the SGR path above unchanged.
-            controlModeGestures: tmuxControlMode,
-            onWindowSwitch: ({required bool next}) {
-              final proxy = _resolveProxy();
-              if (proxy == null) return;
-              if (proxy.data.state != SshSessionState.connected) return;
-              proxy.sendTmuxGesture(
-                next
-                    ? TmuxWindowGesture.nextWindow
-                    : TmuxWindowGesture.previousWindow,
-              );
-              // #918: a window-switch swipe is user input — force the full repaint
-              // so the switched window's grid re-reads on EVERY swipe (the historic
-              // "works/fails/works" alternation the Debug tap masked).
-              _forceTerminalRepaint();
-            },
-            onStatusTap: ({required int col, required int totalCols}) {
-              final proxy = _resolveProxy();
-              if (proxy == null) return;
-              if (proxy.data.state != SshSessionState.connected) return;
-              proxy.sendTmuxGesture(
-                TmuxWindowGesture.tapStatusCol,
-                statusCol: col,
-                statusCols: totalCols,
-              );
-              // #918: a status-row tap (tmux window select) is user input.
-              _forceTerminalRepaint();
-            },
-            // #906 Stage 2: a vertical swipe scrolls the tmux scrollback via a
-            // real capture-pane history request (control mode emits no %output
-            // for copy-mode scroll, so the local scrollback can't show it). GATED
-            // OFF (kControlModeScrollRenders): the capture request→response byte
-            // path is proven, but flterm's grid does not yet DISPLAY a captured
-            // history WINDOW (its own scrollback + follow-to-bottom bury it — a
-            // flterm-internal render change is pending). Until then, wiring this
-            // would FREEZE the screen on a swipe (worse than the harmless local
-            // no-op), so a vertical swipe stays on the local [_applyScroll] path.
-            // Flip the flag to `true` once flterm renders the scrolled capture.
-            onScroll: kControlModeScrollRenders
-                ? (deltaLines) {
-                    final proxy = _resolveProxy();
-                    if (proxy == null) return;
-                    if (proxy.data.state != SshSessionState.connected) return;
-                    proxy.sendTmuxScroll(deltaLines);
-                    _forceTerminalRepaint();
-                  }
-                : null,
             // #705: long-press-drag drives flterm's LOCAL selection (persists
             // after release → Copy reads it), not a tmux SGR drag.
             onSelectionStart: _onSelectionStart,

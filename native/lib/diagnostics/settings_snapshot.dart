@@ -18,7 +18,6 @@ import '../state/detection_providers.dart' show detectionSettingsPrefKey;
 import '../state/feature_flags_providers.dart' show featureFlagsPrefKey;
 import '../state/keepalive_providers.dart' show keepaliveEnabledPrefKey;
 import '../state/terminal_backend.dart' show terminalBackendPrefKey;
-import '../state/tmux_control_mode_setting.dart' show tmuxControlModePrefKey;
 import '../state/ui_prefs_providers.dart'
     show
         composeBarVisiblePrefKey,
@@ -34,7 +33,6 @@ const List<String> kSettingsSnapshotKeys = <String>[
   terminalBackendPrefKey,
   keepaliveEnabledPrefKey,
   batteryOptAskedPrefKey,
-  tmuxControlModePrefKey,
   detectionSettingsPrefKey,
   featureFlagsPrefKey,
   // NOT filesSortPrefKey: its value is keyed per profile by

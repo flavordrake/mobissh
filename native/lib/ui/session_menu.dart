@@ -1226,11 +1226,10 @@ class _SessionRow extends ConsumerWidget {
             },
           ),
           // Reconnect — for droppable states AND for a CONNECTED session (owner
-          // request: force-reconnect an active session, e.g. to pick up a
-          // control-mode toggle that only applies on reconnect). reconnect(id)
-          // routes through the notifier → _reviveFromProfile, which re-issues
-          // connect in ANY state (the same path the control-mode toggle uses);
-          // it (re)starts the foreground isolate first so a last-session drop
+          // request: force-reconnect an active session). reconnect(id) routes
+          // through the notifier → _reviveFromProfile, which re-issues connect
+          // in ANY state; it (re)starts the foreground isolate first so a
+          // last-session drop
           // that stopped the service still comes back.
           if (sessionCanReconnect(state) ||
               state == SshSessionState.connected)

@@ -64,7 +64,8 @@ const Set<String> _allowedSettingKeys = {
   'mobissh.ui.terminalBackend', // terminalBackendPrefKey (enum name)
   'mobissh.ui.composeBarVisible', // composeBarVisiblePrefKey (bool)
   'mobissh.keepalive.enabled', // keepaliveEnabledPrefKey (bool)
-  'mobissh.ui.tmuxControlMode', // tmuxControlModePrefKey (bool)
+  // NOT 'mobissh.ui.tmuxControlMode': the setting was removed (#1285). A backup
+  // made before then carries it; it is ignored like any unknown key.
   'mobissh.files.sort.v1', // filesSortPrefKey (versioned JSON blob string)
   'mobissh.detection.settings', // detectionSettingsPrefKey (JSON blob string)
 };
@@ -125,7 +126,6 @@ Future<void> Function()? _stageSetting(
       return null;
     case 'mobissh.ui.composeBarVisible':
     case 'mobissh.keepalive.enabled':
-    case 'mobissh.ui.tmuxControlMode':
       if (value is bool) {
         return () => prefs.setBool(key, value);
       }

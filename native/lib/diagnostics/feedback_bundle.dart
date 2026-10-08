@@ -77,7 +77,6 @@ String assembleFeedbackBundle({
   required List<String> connectLog,
   List<String> gestureLog = const <String>[],
   List<String> lifecycleLog = const <String>[],
-  List<String> controlModeTrace = const <String>[],
   List<String> detectionExceptions = const <String>[],
   Map<String, Object?>? frameStats,
   // #1257: allowlisted non-secret settings (settings_snapshot.dart).
@@ -94,14 +93,6 @@ String assembleFeedbackBundle({
   // reconnect decisions). Survives the 200-event connect-ring churn so the next
   // wake-frozen occurrence is diagnosable from the bundle alone.
   final scrubbedLifecycleLog = lifecycleLog
-      .map(scrubSecrets)
-      .toList(growable: false);
-  // #906: dedicated control-mode (`-CC`) trace ring — attach path, window-list
-  // snapshots, parsed notifications, gesture resolutions — so ONE report fully
-  // diagnoses a "not switching" control-mode issue. Scrubbed like the others;
-  // it carries only ids/indices/commands, never terminal content. Empty when
-  // control mode is OFF.
-  final scrubbedControlModeTrace = controlModeTrace
       .map(scrubSecrets)
       .toList(growable: false);
   // #995: the saved "Not a URL" / "Not a file" reports (oldest first, so the
@@ -143,7 +134,6 @@ String assembleFeedbackBundle({
     'connectLog': scrubbedLog,
     'gestureLog': scrubbedGestureLog,
     'lifecycleLog': scrubbedLifecycleLog,
-    'controlModeTrace': scrubbedControlModeTrace,
     'detectionExceptionCount': detectionExceptions.length,
     'detectionExceptions': scrubbedExceptions,
     // #1135: frame-time + viewport + session-load telemetry. Lifetime

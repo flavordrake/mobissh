@@ -20,12 +20,11 @@ Building, testing and operating MobiSSH, and the diagnostic and distribution fea
 |---|---|---|
 | In-app Feedback button (screenshot, logs, traces, Review & Send) | yes | always mounted (`native/lib/main.dart`); endpoint `MOBISSH_FEEDBACK_ENDPOINT`, key `MOBISSH_FEEDBACK_KEY` |
 | Repro recording (long-press Feedback: frame burst) | yes | always |
-| Telemetry rings (connect, lifecycle, gesture, control-mode, paint and frame stats, scroll and SGR traces) | yes, collected in memory, sent only inside a bug report | none |
+| Telemetry rings (connect, lifecycle, gesture, paint and frame stats, scroll and SGR traces) | yes, collected in memory, sent only inside a bug report | none |
 | Raw terminal byte traces | no | `MOBISSH_RAW_DIAGNOSTICS=true` (`native/lib/diagnostics/diagnostics_config.dart`) |
 | Crash reports, uploaded on next launch or connect | yes, automatic | endpoint hard-coded to the tailnet host (`native/lib/diagnostics/crash_reporter.dart`); currently rejected for lack of the key (#1243) |
-| Settings → Advanced (share feedback offline, last crash, the bug-report outbox; force crash upload, connection audit and tmux control mode behind "Show experimental settings", stored in `mobissh.ui.featureFlags`) | yes, collapsed | none |
+| Settings → Advanced (share feedback offline, last crash, the bug-report outbox; force crash upload and connection audit behind "Show experimental settings", stored in `mobissh.ui.featureFlags`) | yes, collapsed | none |
 | Self-update (banner and Settings → About & updates) | sideloaded APK only | `MOBISSH_BUILD` must be set; the Play bundle swaps in `android/app/src/play/AndroidManifest.xml`, which drops the installer permission and provider |
-| tmux control mode | yes, opt-in setting, off by default | `kControlModeScrollRenders = false` keeps its scrollback off |
 | Body text selection | no | `kBodyTextSelectionEnabled = false`; the gutter is the copy path |
 | xterm.dart terminal backend | no (code kept as a fallback, not selectable) | |
 
@@ -145,8 +144,8 @@ Test infrastructure:
 
 - Test SSH server: `docker-compose.test.yml` (`testuser`/`testpass`, ed25519 key in `docker/test-sshd/`, tmux with `mouse on`), started by `scripts/test-sshd-up.sh` and `scripts/lib/testsshd-fixture.sh`; `scripts/testsshd-tailnet-bridge.sh` exposes it to tailnet peers.
 - Emulator: the fleet emulator is leased with `scripts/with-fleet-emulator.sh`; `scripts/emu-container-ctl.sh` drives the dedicated emulator container; `scripts/emulator-ctl.sh` and `scripts/emulator-maintain.sh` manage a local always-on AVD (`scripts/setup-avd.sh`, `scripts/boot-emulator.sh`, `scripts/emulator-cleanup.sh`). `scripts/native-connect-test.sh` runs one test on the device; `scripts/emu-shot.sh` and `scripts/emu-log.sh` grab a screenshot or logcat; `scripts/demo-gif.sh` turns an `adb shell screenrecord` clip into a small looping GIF for the README media in `docs/media/`; `scripts/ci-reap.sh` sweeps orphaned test infrastructure.
-- Fixtures named by test headers: `scripts/cc-attach-setup.sh`, `scripts/cc-capture-setup.sh`, `scripts/cc-exec-switch-setup.sh`, `scripts/cc-scroll-setup.sh`, `scripts/cc-nested-setup.sh` and `scripts/cc-nested-teardown.sh` (tmux control mode), `scripts/deep-link-window-1211-setup.sh`, `scripts/deep-link-acceptance.sh`, `scripts/self-update-1216-setup.sh` and `scripts/self-update-1216-teardown.sh` (with `scripts/gen-self-update-fixture-apks.sh`), `scripts/sftp-bytes-1225-setup.sh` and `scripts/sftp-bytes-1225-teardown.sh` (with `scripts/lib/sftp-cap-proxy.sh`), `scripts/run-kbrace-repro.sh`.
-- Diagnostics for terminal work: `scripts/tmux-state-trace.sh` (the real tmux server's state), `scripts/capture-terminal-corpus.sh` and `scripts/capture-tmux-cc.sh` (fixture capture), `scripts/validate-cc-parser.sh` (control-mode parser check), `scripts/native-fork-test.sh` (flterm's own suite), `scripts/vendor-mermaid.sh` (the offline Mermaid bundle).
+- Fixtures named by test headers: `scripts/deep-link-window-1211-setup.sh`, `scripts/deep-link-acceptance.sh`, `scripts/self-update-1216-setup.sh` and `scripts/self-update-1216-teardown.sh` (with `scripts/gen-self-update-fixture-apks.sh`), `scripts/sftp-bytes-1225-setup.sh` and `scripts/sftp-bytes-1225-teardown.sh` (with `scripts/lib/sftp-cap-proxy.sh`), `scripts/run-kbrace-repro.sh`.
+- Diagnostics for terminal work: `scripts/tmux-state-trace.sh` (the real tmux server's state), `scripts/capture-terminal-corpus.sh` (fixture capture), `scripts/native-fork-test.sh` (flterm's own suite), `scripts/vendor-mermaid.sh` (the offline Mermaid bundle).
 
 ### Doc drift
 

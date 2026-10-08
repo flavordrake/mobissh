@@ -18,7 +18,6 @@ import '../diagnostics/connect_trace.dart';
 import '../services/session_host.dart';
 import '../services/session_messages.dart';
 import '../services/task_ssh_gateway.dart';
-import '../terminal/tmux_control_mode_flag.dart';
 import 'ssh_connect_params.dart';
 import 'ssh_session.dart';
 
@@ -245,10 +244,6 @@ class SshSessionProxy {
         username: params.username,
         authJson: SessionHost.encodeAuth(params.auth),
         title: title,
-        // #911: carry the UI-isolate control-mode flag across the gateway so the
-        // (separate) foreground-task isolate that opens the shell enters `tmux
-        // -CC`. A per-isolate global set in the UI never reaches the task host.
-        controlMode: tmuxControlMode,
         force: force,
         // #1183 R7/R8: the hops, outermost-first, each with its OWN resolved
         // credentials. The task isolate builds the chain from these — it never
@@ -331,52 +326,6 @@ class SshSessionProxy {
   /// Send keystroke / paste bytes to the remote PTY through the gateway.
   void sendInput(Uint8List bytes) {
     gateway.send(SshInputCommand(sessionId: sessionId, bytes: bytes).toJson());
-  }
-
-  /// Send a FULL tmux `-CC` control-command LINE for ATOMIC delivery (#911 Part
-  /// C). Unlike [sendInput] (keystroke bytes that can fragment across the gateway
-  /// and land in the pane shell), this travels as ONE command envelope and the
-  /// host writes it as a single framed line — so a multi-token command survives
-  /// intact. [command] carries NO trailing newline; the host adds exactly one.
-  /// A no-op on the task side unless control mode is ON for this session.
-  void sendControlCommand(String command) {
-    gateway.send(
-      SshControlCommand(sessionId: sessionId, command: command).toJson(),
-    );
-  }
-
-  /// Issue a high-level tmux WINDOW gesture (#911 Part C) — the host resolves it
-  /// against its authoritative ordered window list and delivers the matching
-  /// `next-window` / `previous-window` / `select-window -t @<id>` atomically. For
-  /// [TmuxWindowGesture.tapStatusCol] pass the 1-based [statusCol] and the
-  /// status-line width [statusCols]; ignored for next/previous.
-  void sendTmuxGesture(
-    TmuxWindowGesture gesture, {
-    int statusCol = 0,
-    int statusCols = 0,
-  }) {
-    gateway.send(
-      SshTmuxGestureCommand(
-        sessionId: sessionId,
-        gesture: gesture,
-        statusCol: statusCol,
-        statusCols: statusCols,
-      ).toJson(),
-    );
-  }
-
-  /// Scroll the tmux `-CC` scrollback view by [deltaLines] (#906 Stage 2) —
-  /// positive scrolls BACK into history (a downward swipe), negative toward live.
-  /// The host advances the channel's scroll offset and captures the matching
-  /// history window; the rendered response arrives on [output] as the scrollback
-  /// view. A no-op on the task side unless control mode is ON for this session.
-  void sendTmuxScroll(int deltaLines) {
-    gateway.send(
-      SshTmuxScrollCommand(
-        sessionId: sessionId,
-        deltaLines: deltaLines,
-      ).toJson(),
-    );
   }
 
   /// Request a directory listing over SFTP (#559). The matching
@@ -616,8 +565,8 @@ class SshSessionProxy {
 
   /// #1211: select tmux window [window] of session [session] by exact name.
   /// The task runs it on a SEPARATE non-PTY exec channel of this session's
-  /// connection — nothing is typed into the terminal, and it works whether or
-  /// not control mode is on. Completes true iff tmux selected it; false on no
+  /// connection — nothing is typed into the terminal. Completes true iff tmux
+  /// selected it; false on no
   /// such window/session, a dead session, or no reply within [timeout].
   Future<bool> tmuxSelectWindow({
     required String session,
@@ -725,11 +674,6 @@ class SshSessionProxy {
       case SshLifecycleEvent():
         // Task-global lifecycle telemetry (#766). The UI-side gateway already
         // recorded it into the lifecycle ring before _incoming, so a per-session
-        // proxy has nothing to do — handle it for switch exhaustiveness only.
-        break;
-      case SshControlModeTraceEvent():
-        // Task-global control-mode telemetry (#906). The UI-side gateway already
-        // recorded it into the control-mode ring before _incoming; a per-session
         // proxy has nothing to do — handle it for switch exhaustiveness only.
         break;
       case SshForwardListEvent():

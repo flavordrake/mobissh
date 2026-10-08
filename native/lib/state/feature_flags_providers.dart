@@ -1,20 +1,17 @@
 // The single "Show experimental settings" flag (#1257).
 //
-// One switch, not per-feature flags: only three items qualify today (tmux
-// control mode, Force upload, Connection audit), so a per-feature map would be
-// speculative. The value is versioned JSON in ONE key; the version lives inside
-// the value (code-style rule), so a later per-feature map migrates without a
-// key bump. Corrupt or unknown-version data falls back to the default.
+// One switch, not per-feature flags: only two items qualify today (Force
+// upload, Connection audit), so a per-feature map would be speculative. The
+// value is versioned JSON in ONE key; the version lives inside the value
+// (code-style rule), so a later per-feature map migrates without a key bump.
+// Corrupt or unknown-version data falls back to the default.
 //
-// Hiding is display-only: the flag never changes a hidden setting's value or
-// effect. Settings → Advanced announces any hidden setting that is ON.
+// Hiding is display-only: both items are actions, not stored settings.
 
 import 'dart:convert';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-
-import 'tmux_control_mode_setting.dart';
 
 const String featureFlagsPrefKey = 'mobissh.ui.featureFlags';
 
@@ -85,10 +82,3 @@ final featureFlagsProvider =
     StateNotifierProvider<FeatureFlagsNotifier, FeatureFlags>(
       (ref) => FeatureFlagsNotifier(),
     );
-
-/// How many experimental settings differ from their default. Only tmux control
-/// mode carries a value today; Force upload and Connection audit are actions.
-final experimentalSettingsOnCountProvider = Provider<int>((ref) {
-  final controlMode = ref.watch(tmuxControlModeProvider);
-  return controlMode != tmuxControlModeDefault ? 1 : 0;
-});

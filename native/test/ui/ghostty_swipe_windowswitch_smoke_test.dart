@@ -36,6 +36,14 @@ void main() {
     return int.parse(m.group(3)!);
   }
 
+  // Parse (col,row) out of an SGR-1006 button-1 PRESS `CSI < 0 ; col ; row M`
+  // (the tap-click #693 synthesises). Null if the string isn't one.
+  (int, int)? clickCell(String sgr) {
+    final m = RegExp(r'^\x1b\[<0;(\d+);(\d+)M$').firstMatch(sgr);
+    if (m == null) return null;
+    return (int.parse(m.group(1)!), int.parse(m.group(2)!));
+  }
+
   int? wheelButton(String sgr) {
     final m = RegExp(r'^\x1b\[<(\d+);(\d+);(\d+)M$').firstMatch(sgr);
     if (m == null) return null;
@@ -83,57 +91,6 @@ void main() {
       ),
     );
     return reports;
-  }
-
-  // #911 Part C: pump the router with control-mode gestures ON, returning the
-  // window-switch directions and status-tap (col,totalCols) the router emits via
-  // the REAL-command callbacks (instead of synthesised SGR). Also returns the SGR
-  // sink so a test can assert NO SGR is forwarded under the flag.
-  Future<
-      ({
-        List<bool> switches,
-        List<(int, int)> statusTaps,
-        List<String> sgr,
-      })> pumpControlModeRouter(
-    WidgetTester tester, {
-    int cols = 80,
-    int rows = 24,
-  }) async {
-    final switches = <bool>[];
-    final statusTaps = <(int, int)>[];
-    final sgr = <String>[];
-    await tester.pumpWidget(
-      MaterialApp(
-        home: Scaffold(
-          body: GhosttyPointerGestureRouter(
-            active: true,
-            scrollController: TerminalScrollController(),
-            cols: cols,
-            rows: rows,
-            lastSentCols: cols,
-            lastSentRows: rows,
-            cellWidth: 8,
-            cellHeight: 16,
-            mouseTrackingLabel: 'any',
-            onTap: () {},
-            onFocus: () {},
-            onMouseReport: sgr.add,
-            onSelectionStart: (_, _) {},
-            onSelectionExtend: (_, _) {},
-            hasSelection: () => false,
-            onSelectionClear: () {},
-            urlAtCell: (_, _) => null,
-            onUrlTap: (_) {},
-            onUrlLongPress: (_, _) {},
-            controlModeGestures: true,
-            onWindowSwitch: ({required bool next}) => switches.add(next),
-            onStatusTap: ({required int col, required int totalCols}) =>
-                statusTaps.add((col, totalCols)),
-          ),
-        ),
-      ),
-    );
-    return (switches: switches, statusTaps: statusTaps, sgr: sgr);
   }
 
   group('#719 horizontal swipe → window-switch wheel report (drag→report)', () {
@@ -228,62 +185,6 @@ void main() {
     );
   });
 
-  group('#911 control-mode gestures: REAL commands, NO synthesised SGR', () {
-    testWidgets('swipe RIGHT → onWindowSwitch(next), no SGR forwarded', (
-      tester,
-    ) async {
-      final r = await pumpControlModeRouter(tester);
-      final center = tester.getCenter(find.byType(GhosttyPointerGestureRouter));
-      await tester.dragFrom(center, const Offset(120, 0));
-      await tester.pumpAndSettle();
-      expect(r.switches, [true], reason: 'swipe RIGHT → next-window');
-      expect(r.sgr, isEmpty, reason: 'control mode must not synthesise SGR');
-    });
-
-    testWidgets('swipe LEFT → onWindowSwitch(previous), no SGR forwarded', (
-      tester,
-    ) async {
-      final r = await pumpControlModeRouter(tester);
-      final center = tester.getCenter(find.byType(GhosttyPointerGestureRouter));
-      await tester.dragFrom(center, const Offset(-120, 0));
-      await tester.pumpAndSettle();
-      expect(r.switches, [false], reason: 'swipe LEFT → previous-window');
-      expect(r.sgr, isEmpty);
-    });
-
-    testWidgets('a tap on the STATUS ROW → onStatusTap(col,totalCols)', (
-      tester,
-    ) async {
-      // 80x24 grid, cell 8x16 → the status row (row 24) is the bottom band.
-      final r = await pumpControlModeRouter(tester, cols: 80, rows: 24);
-      final box = tester.getRect(find.byType(GhosttyPointerGestureRouter));
-      // Tap near the bottom (status row) at ~40% across → a real status tap.
-      final tapPoint = Offset(box.left + box.width * 0.4, box.bottom - 4);
-      await tester.tapAt(tapPoint);
-      await tester.pumpAndSettle();
-      expect(r.statusTaps, hasLength(1),
-          reason: 'a status-row tap issues a select-window gesture');
-      final (col, totalCols) = r.statusTaps.single;
-      expect(totalCols, 80);
-      expect(col, greaterThan(0));
-      expect(col, lessThanOrEqualTo(80));
-      expect(r.sgr, isEmpty, reason: 'no synthesised SGR click under the flag');
-    });
-
-    testWidgets('a tap ABOVE the status row does NOT issue a window gesture', (
-      tester,
-    ) async {
-      final r = await pumpControlModeRouter(tester, cols: 80, rows: 24);
-      final box = tester.getRect(find.byType(GhosttyPointerGestureRouter));
-      // Tap near the TOP (a content row, not the status bar).
-      await tester.tapAt(Offset(box.left + box.width * 0.4, box.top + 4));
-      await tester.pumpAndSettle();
-      expect(r.statusTaps, isEmpty,
-          reason: 'only the status row switches windows');
-      expect(r.sgr, isEmpty);
-    });
-  });
-
   group('#922 keyboard-aware grid → status-tap lands on tmux status row', () {
     testWidgets(
       'a status-tap maps to the LAST-SENT (keyboard-aware) status row',
@@ -296,17 +197,18 @@ void main() {
         // grid (via ghosttyGridForBox) so lastSentRows == the visible rows; the
         // status-tap (which targets lastSentRows, #719) then lands on tmux's real
         // status row. Here lastSentRows==rows==34 models the post-fix state: a tap
-        // at the visible bottom issues a status tap at row 34, NOT a middle click.
-        final r = await pumpControlModeRouter(tester, cols: 58, rows: 34);
+        // at the visible bottom clicks row 34, NOT the middle of the grid.
+        final reports = await pumpRouter(tester, cols: 58, rows: 34);
         final box = tester.getRect(find.byType(GhosttyPointerGestureRouter));
         await tester.tapAt(Offset(box.left + box.width * 0.4, box.bottom - 4));
         await tester.pumpAndSettle();
-        expect(r.statusTaps, hasLength(1),
-            reason: 'a tap at the visible bottom hits the status row');
-        final (col, totalCols) = r.statusTaps.single;
-        expect(totalCols, 58);
+        final clicks = reports.map(clickCell).whereType<(int, int)>().toList();
+        expect(clicks, hasLength(1),
+            reason: 'a tap at the visible bottom is one click');
+        final (col, row) = clicks.single;
+        expect(row, 34, reason: 'the click lands on the status row');
         expect(col, greaterThan(0));
-        expect(r.sgr, isEmpty);
+        expect(col, lessThanOrEqualTo(58));
       },
     );
 
@@ -331,11 +233,12 @@ void main() {
         );
         expect(cols, 58);
         expect(rows, 34);
-        final r = await pumpControlModeRouter(tester, cols: cols, rows: rows);
+        final reports = await pumpRouter(tester, cols: cols, rows: rows);
         final box = tester.getRect(find.byType(GhosttyPointerGestureRouter));
         await tester.tapAt(Offset(box.left + box.width * 0.5, box.bottom - 2));
         await tester.pumpAndSettle();
-        expect(r.statusTaps, hasLength(1),
+        final clicks = reports.map(clickCell).whereType<(int, int)>().toList();
+        expect(clicks.map((c) => c.$2), [rows],
             reason: 'the keyboard-aware grid puts the status row at the bottom');
       },
     );

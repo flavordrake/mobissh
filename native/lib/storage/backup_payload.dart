@@ -29,7 +29,6 @@ import '../state/keepalive_providers.dart';
 import '../state/profile_order_providers.dart';
 import '../state/recent_sessions.dart';
 import '../state/terminal_backend.dart';
-import '../state/tmux_control_mode_setting.dart';
 import '../state/ui_prefs_providers.dart';
 import 'custom_patterns_store.dart';
 import 'detection_exceptions_store.dart';
@@ -53,7 +52,6 @@ const List<String> kBackupSettingsAllowlist = <String>[
   terminalBackendPrefKey,
   composeBarVisiblePrefKey,
   keepaliveEnabledPrefKey,
-  tmuxControlModePrefKey,
   filesSortPrefKey,
   detectionSettingsPrefKey,
 ];

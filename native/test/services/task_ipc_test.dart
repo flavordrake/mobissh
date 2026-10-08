@@ -26,7 +26,6 @@ void main() {
         username: 'user',
         authJson: SessionHost.encodeAuth(const SshAuth.password('secret')),
         title: 'My host',
-        controlMode: true,
       );
       final restored = SshTaskCommand.fromJson(cmd.toJson());
       expect(restored, isA<SshConnectCommand>());
@@ -37,27 +36,20 @@ void main() {
       expect(restored.username, 'user');
       expect(restored.authJson, cmd.authJson);
       expect(restored.title, 'My host');
-      // #911: the control-mode bit crosses the gateway so the task isolate
-      // (which owns the shell + the per-isolate `tmuxControlMode` global) enters
-      // `tmux -CC`. A UI-isolate flag never reaches the task isolate otherwise.
-      expect(restored.controlMode, isTrue);
+      expect(cmd.toJson().containsKey('controlMode'), isFalse);
     });
 
-    test('SshConnectCommand controlMode defaults false + omitted from json', () {
-      final cmd = SshConnectCommand(
+    test('SshConnectCommand ignores the retired controlMode key (#1285)', () {
+      final json = SshConnectCommand(
         sessionId: 'host:22:user:1',
         host: 'host',
         port: 22,
         username: 'user',
         authJson: SessionHost.encodeAuth(const SshAuth.password('secret')),
-      );
-      expect(cmd.controlMode, isFalse);
-      // Omitted when false so the default wire shape is unchanged (the shipped
-      // scrape path sends no extra field).
-      expect(cmd.toJson().containsKey('controlMode'), isFalse);
-      final restored =
-          SshTaskCommand.fromJson(cmd.toJson()) as SshConnectCommand;
-      expect(restored.controlMode, isFalse);
+      ).toJson()..['controlMode'] = true;
+      final restored = SshTaskCommand.fromJson(json) as SshConnectCommand;
+      expect(restored.host, 'host');
+      expect(restored.toJson().containsKey('controlMode'), isFalse);
     });
 
     test('SshInputCommand preserves binary bytes', () {
@@ -145,32 +137,6 @@ void main() {
       expect(restored.activeHost, isNull);
     });
 
-    test('SshControlCommand round-trips a multi-token line intact (#911)', () {
-      const cmd =
-          SshControlCommand(sessionId: 'sid', command: 'select-window -t @1');
-      final restored =
-          SshTaskCommand.fromJson(cmd.toJson()) as SshControlCommand;
-      expect(restored.kind, SshTaskCommandKind.controlCommand);
-      expect(restored.command, 'select-window -t @1');
-    });
-
-    test('SshTmuxGestureCommand round-trips each gesture (#911)', () {
-      for (final g in TmuxWindowGesture.values) {
-        final cmd = SshTmuxGestureCommand(
-          sessionId: 'sid',
-          gesture: g,
-          statusCol: 45,
-          statusCols: 90,
-        );
-        final restored =
-            SshTaskCommand.fromJson(cmd.toJson()) as SshTmuxGestureCommand;
-        expect(restored.kind, SshTaskCommandKind.tmuxGesture);
-        expect(restored.gesture, g);
-        expect(restored.statusCol, 45);
-        expect(restored.statusCols, 90);
-      }
-    });
-
     test('SftpStatCommand round-trips requestId + path (#990)', () {
       const cmd = SftpStatCommand(
         sessionId: 'host:22:user:1',
@@ -246,19 +212,6 @@ void main() {
       // Task-global: empty sentinel sessionId (mirrors SshTaskReadyEvent).
       expect(restored.sessionId, '');
       expect(restored.kind, SshTaskEventKind.lifecycle);
-    });
-
-    test('SshControlModeTraceEvent preserves the formatted line verbatim (#906)',
-        () {
-      const line = '12:34:56.789 [cc] gesture raw=tapStatusCol col=45 cols=90 → '
-          'resolved=select-window -t @1 → sent';
-      const ev = SshControlModeTraceEvent(line: line);
-      final restored =
-          SshTaskEvent.fromJson(ev.toJson()) as SshControlModeTraceEvent;
-      expect(restored.line, line);
-      // Task-global: empty sentinel sessionId (mirrors SshLifecycleEvent).
-      expect(restored.sessionId, '');
-      expect(restored.kind, SshTaskEventKind.controlModeTrace);
     });
 
     test('SftpStatResultEvent round-trips exists both ways (#990)', () {

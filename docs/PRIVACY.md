@@ -61,12 +61,12 @@ your sessions. The Play Store build does not include this.
 - recent **terminal I/O traces** (the bytes rendered on screen, scroll and
   gesture logs, the terminal's automatic replies) — used to reproduce
   display/input bugs;
-- **connection, app-lifecycle, tmux control-mode and diagnostic logs**,
+- **connection, app-lifecycle and diagnostic logs**,
   link-detection layout data, and any pending **crash report**;
 - a **settings snapshot**: only these settings, picked by name — text size,
   default font, default terminal theme, whether the compose bar is shown, the
   terminal renderer, whether sessions are kept alive in the background, whether
-  the battery-optimization prompt was shown, tmux control mode, the link
+  the battery-optimization prompt was shown, the link
   detection settings (which types are on, intensity, gutter side and mode, and
   the package name of the browser you chose for links), whether experimental
   settings are shown. No hostnames, ports, usernames, passwords, keys or

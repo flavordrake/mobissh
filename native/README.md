@@ -12,7 +12,7 @@ lib/
                  link routing and browsers, self-update, port forwarding
   state/         Riverpod providers (sessions, settings, detection, UI prefs)
   storage/       profiles, secure secrets, key library, favorites, encrypted backup
-  terminal/      session stream parser, tmux control mode, URL hit testing
+  terminal/      session stream parser, URL hit testing
   ui/            screens, the libghostty terminal view and gesture router, keybar,
                  compose bar, file browser and viewers, settings, Detection Lab
   diagnostics/   feedback bundle, crash reporter, telemetry rings
@@ -21,7 +21,6 @@ lib/
 third_party/flterm/   vendored terminal fork rendering through libghostty (FFI)
 test/                 headless unit and widget tests (fast gate)
 integration_test/     on-device tests, gated by BASELINE.manifest
-tool/                 developer tools (tmux control-mode parser validation)
 ```
 
 ## Running

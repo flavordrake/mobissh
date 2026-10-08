@@ -113,35 +113,9 @@ enum SshTaskCommandKind {
   /// `mobissh://…tmux=S&window=W` link. Carries the two validated tokens, not
   /// a command: the host re-validates them and runs
   /// `tmuxSelectWindowExecLine` on a SEPARATE non-PTY exec channel of the
-  /// session's connection — never the user's terminal, and independent of
-  /// control mode. Replies with a [SshTaskEventKind.tmuxSelectWindowResult].
+  /// session's connection — never the user's terminal. Replies with a
+  /// [SshTaskEventKind.tmuxSelectWindowResult].
   tmuxSelectWindow,
-
-  // --- tmux control mode (#911, Part C) ---
-
-  /// UI → task: a FULL tmux `-CC` control-command LINE, delivered ATOMICALLY
-  /// (#911). The host writes it as ONE framed `transport.send` with a single
-  /// trailing newline (`TmuxControlChannel.controlCommand`) so a multi-token
-  /// command (`select-window -t @1`) can't fragment across the gateway and hit
-  /// the pane shell. Only acts when the control-mode flag is ON (the host has a
-  /// `tmuxChannel`); a no-op otherwise. NEVER used by the scrape (flag-OFF) path.
-  controlCommand,
-
-  /// UI → task: a high-level tmux WINDOW gesture (#911) — `nextWindow`,
-  /// `previousWindow`, or a status-bar TAP at a column. The host resolves it
-  /// against the channel's authoritative ordered window list and issues the
-  /// matching `next-window` / `previous-window` / `select-window -t @<id>` via the
-  /// atomic control-command path. Keeping the index lookup TASK-SIDE means the UI
-  /// never needs the window list and a status tap maps with no pixel guessing.
-  tmuxGesture,
-
-  /// UI → task: a tmux `-CC` SCROLLBACK gesture (#906 Stage 2). Carries a signed
-  /// line delta (>0 = back into history, <0 = toward live). The host advances the
-  /// channel's scroll offset and requests the matching `capture-pane` history
-  /// window, whose rendered response IS the scrollback view — control mode emits
-  /// no `%output` for copy-mode scroll, so the client must capture it. A no-op
-  /// unless control mode is ON. NEVER used by the scrape (flag-OFF) path.
-  tmuxScroll,
 
   // --- Local port forwarding, ssh -L (#1047) ---
 
@@ -160,19 +134,6 @@ enum SshTaskCommandKind {
   /// UI → task: replay the session's current forward table as an
   /// [SshForwardListEvent] (sheet-open hydration).
   forwardList,
-}
-
-/// The kind of tmux window gesture an [SshTmuxGestureCommand] carries (#911).
-enum TmuxWindowGesture {
-  /// Horizontal swipe RIGHT → `next-window`.
-  nextWindow,
-
-  /// Horizontal swipe LEFT → `previous-window`.
-  previousWindow,
-
-  /// Tap a status-bar window name → `select-window -t @<id>` for the window whose
-  /// status segment the tap column fell in.
-  tapStatusCol,
 }
 
 /// Envelope kind discriminator for task → UI events.
@@ -264,15 +225,6 @@ enum SshTaskEventKind {
   /// authoritative-list event instead of per-forward deltas keeps the UI free
   /// of reconciliation state.
   forwardList,
-
-  /// Task → UI: one structured tmux control-mode (`-CC`) telemetry line (#906).
-  /// The control-mode trace (`cmtrace` / `controlModeLog`) is written in the
-  /// foreground-task isolate (attach path, window-list snapshots, parsed
-  /// notifications, gesture resolutions) whose ring the UI never reads. Mirrors
-  /// [lifecycle]: the task forwards each line so the UI-side ring — the one the
-  /// feedback bundle reads — carries it, so ONE bug report fully diagnoses a
-  /// control-mode issue. Task-global, so [sessionId] is the empty sentinel.
-  controlModeTrace,
 }
 
 /// One remote filesystem entry surfaced to the file browser (#559). Kept small
@@ -354,7 +306,7 @@ sealed class SshTaskCommand {
           username: json['username'] as String,
           authJson: Map<String, dynamic>.from(json['auth'] as Map),
           title: json['title'] as String?,
-          controlMode: json['controlMode'] as bool? ?? false,
+          // A `controlMode` key from a build before #1285 is ignored.
           force: json['force'] as bool? ?? false,
           jumpHops: <Map<String, dynamic>>[
             for (final hop in (json['jumpHops'] as List? ?? const []))
@@ -459,28 +411,6 @@ sealed class SshTaskCommand {
           requestId: json['requestId'] as String,
           session: json['session'] as String,
           window: json['window'] as String,
-        );
-      case SshTaskCommandKind.controlCommand:
-        return SshControlCommand(
-          sessionId: sessionId,
-          command: json['command'] as String,
-        );
-      case SshTaskCommandKind.tmuxGesture:
-        final gestureRaw = json['gesture'] as String;
-        return SshTmuxGestureCommand(
-          sessionId: sessionId,
-          gesture: TmuxWindowGesture.values.firstWhere(
-            (g) => g.name == gestureRaw,
-            orElse: () => throw FormatException(
-                'SshTmuxGestureCommand: unknown gesture "$gestureRaw"'),
-          ),
-          statusCol: (json['statusCol'] as int?) ?? 0,
-          statusCols: (json['statusCols'] as int?) ?? 0,
-        );
-      case SshTaskCommandKind.tmuxScroll:
-        return SshTmuxScrollCommand(
-          sessionId: sessionId,
-          deltaLines: (json['deltaLines'] as int?) ?? 0,
         );
       case SshTaskCommandKind.forwardAdd:
         return SshForwardAddCommand(
@@ -764,7 +694,6 @@ class SshConnectCommand extends SshTaskCommand {
     required this.username,
     required this.authJson,
     this.title,
-    this.controlMode = false,
     this.force = false,
     this.jumpHops = const [],
   }) : super(sessionId);
@@ -788,15 +717,6 @@ class SshConnectCommand extends SshTaskCommand {
   final Map<String, dynamic> authJson;
   final String? title;
 
-  /// Whether the session should enter tmux control mode (`tmux -CC`) on shell
-  /// open (#911). The `tmuxControlMode` flag is a per-ISOLATE global; the host
-  /// runs in the foreground-task isolate, so a flag flipped in the UI isolate
-  /// (settings toggle, or the emulator parity tests) never reaches it. This
-  /// carries the UI-isolate's desired state across the gateway so the host
-  /// isolate enters control mode for THIS session. Defaults false so the
-  /// shipped scrape path is unchanged unless the UI explicitly opts in.
-  final bool controlMode;
-
   /// Jump hops to dial before the target, OUTERMOST-FIRST (#1183, R7). Each
   /// entry is `{host, port, username, auth}` — the hop's OWN identity and its
   /// OWN resolved credentials (R8), resolved UI-side exactly like the target's
@@ -815,7 +735,6 @@ class SshConnectCommand extends SshTaskCommand {
     'username': username,
     'auth': authJson,
     if (title != null) 'title': title,
-    if (controlMode) 'controlMode': true,
     if (force) 'force': true,
     if (jumpHops.isNotEmpty) 'jumpHops': jumpHops,
   };
@@ -1044,95 +963,6 @@ class SshSetActiveCommand extends SshTaskCommand {
     if (activeHost != null) 'activeHost': activeHost,
   };
 }
-
-/// UI → task: a FULL tmux `-CC` control-command line, delivered ATOMICALLY
-/// (#911, Part C Step 1). The host writes [command] as ONE framed
-/// `transport.send` terminated with a single newline, so a multi-token command
-/// survives the UI→isolate gateway intact (Part B found a fragmented command's
-/// tail hit the pane shell). [command] carries NO trailing newline — the host's
-/// `TmuxControlChannel.controlCommand` adds exactly one. Per-session.
-class SshControlCommand extends SshTaskCommand {
-  const SshControlCommand({required String sessionId, required this.command})
-      : super(sessionId);
-
-  /// The complete `-CC` command line (no trailing newline), e.g.
-  /// `select-window -t @1` or `next-window`.
-  final String command;
-
-  @override
-  SshTaskCommandKind get kind => SshTaskCommandKind.controlCommand;
-
-  @override
-  Map<String, dynamic> toJson() => {
-        'kind': kind.name,
-        'sessionId': sessionId,
-        'command': command,
-      };
-}
-
-/// UI → task: a high-level tmux WINDOW gesture (#911, Part C Step 2). The host
-/// resolves it against the channel's authoritative ordered window list and
-/// issues the right control command atomically. [statusCol]/[statusCols] carry
-/// the 1-based tap column + the status-line width for [TmuxWindowGesture.
-/// tapStatusCol] (ignored for next/previous). Per-session.
-class SshTmuxGestureCommand extends SshTaskCommand {
-  const SshTmuxGestureCommand({
-    required String sessionId,
-    required this.gesture,
-    this.statusCol = 0,
-    this.statusCols = 0,
-  }) : super(sessionId);
-
-  final TmuxWindowGesture gesture;
-
-  /// 1-based tap column over the status line (only for [TmuxWindowGesture.
-  /// tapStatusCol]).
-  final int statusCol;
-
-  /// The status-line width in columns at tap time (only for tapStatusCol).
-  final int statusCols;
-
-  @override
-  SshTaskCommandKind get kind => SshTaskCommandKind.tmuxGesture;
-
-  @override
-  Map<String, dynamic> toJson() => {
-        'kind': kind.name,
-        'sessionId': sessionId,
-        'gesture': gesture.name,
-        'statusCol': statusCol,
-        'statusCols': statusCols,
-      };
-}
-
-/// UI → task: a tmux `-CC` SCROLLBACK gesture (#906 Stage 2). [deltaLines] is a
-/// signed line delta — positive scrolls BACK into history (a downward swipe),
-/// negative scrolls toward live. The host advances the channel's scroll offset
-/// and requests the matching `capture-pane` history window; the rendered response
-/// is the scrollback view. Per-session; a no-op unless control mode is ON.
-class SshTmuxScrollCommand extends SshTaskCommand {
-  const SshTmuxScrollCommand({
-    required String sessionId,
-    required this.deltaLines,
-  }) : super(sessionId);
-
-  /// Signed line delta: >0 = older/back, <0 = toward live.
-  final int deltaLines;
-
-  @override
-  SshTaskCommandKind get kind => SshTaskCommandKind.tmuxScroll;
-
-  @override
-  Map<String, dynamic> toJson() => {
-        'kind': kind.name,
-        'sessionId': sessionId,
-        'deltaLines': deltaLines,
-      };
-}
-
-// ---------------------------------------------------------------------------
-// Port-forward commands (#1047)
-// ---------------------------------------------------------------------------
 
 /// UI → task: add/update the LOCAL forward listening on 127.0.0.1:[localPort],
 /// tunnelling each connection to [remoteHost]:[remotePort] via a direct-tcpip
@@ -1364,8 +1194,6 @@ sealed class SshTaskEvent {
               )
               .toList(),
         );
-      case SshTaskEventKind.controlModeTrace:
-        return SshControlModeTraceEvent(line: json['line'] as String);
     }
   }
 }
@@ -1671,39 +1499,6 @@ class SshLifecycleEvent extends SshTaskEvent {
 
   @override
   SshTaskEventKind get kind => SshTaskEventKind.lifecycle;
-
-  @override
-  Map<String, dynamic> toJson() => {
-    'kind': kind.name,
-    'sessionId': sessionId,
-    'line': line,
-  };
-}
-
-/// Task → UI: one already-formatted control-mode (`-CC`) telemetry line (#906).
-///
-/// The control-mode trace (`cmtrace` / `controlModeLog`) is written ONLY in the
-/// foreground-task isolate (the session host + the `-CC` channel adapter): the
-/// attach entry-path, window-list snapshots, each parsed `%…` notification, and
-/// each gesture RESOLUTION (raw → resolved command → sent|dropped). Its ring is
-/// a per-isolate static, so the copy the UI-side feedback bundle reads is
-/// otherwise EMPTY. The task forwards each line as one of these events; the
-/// UI-side gateway records it into the UI isolate's control-mode ring so the
-/// bundle carries it — one report fully diagnoses a "not switching" issue.
-///
-/// [line] is the fully-formatted ring line (`HH:mm:ss.SSS [cc] msg`), recorded
-/// verbatim on the UI side. Task-global, so [sessionId] is the empty sentinel.
-///
-/// [SYNC] single-codebase wire contract; keep the forwarder (SessionHost) and
-/// the UI-side recorder (FlutterForegroundSshGateway) in step.
-class SshControlModeTraceEvent extends SshTaskEvent {
-  const SshControlModeTraceEvent({required this.line}) : super('');
-
-  /// The fully-formatted control-mode ring line, preserved verbatim.
-  final String line;
-
-  @override
-  SshTaskEventKind get kind => SshTaskEventKind.controlModeTrace;
 
   @override
   Map<String, dynamic> toJson() => {

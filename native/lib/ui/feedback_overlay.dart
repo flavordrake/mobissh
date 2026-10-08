@@ -80,7 +80,6 @@ Map<String, Object?> buildFeedbackPayload({
   List<String> connectLog = const <String>[],
   List<String> gestureLog = const <String>[],
   List<String> lifecycleLog = const <String>[],
-  List<String> controlModeTrace = const <String>[],
   List<Map<String, Object?>> byteTrace = const <Map<String, Object?>>[],
   List<Map<String, Object?>> scrollTrace = const <Map<String, Object?>>[],
   List<Map<String, Object?>> sentSgrTrace = const <Map<String, Object?>>[],
@@ -140,14 +139,6 @@ Map<String, Object?> buildFeedbackPayload({
       .map(scrubSecrets)
       .toList(growable: false);
 
-  // #906: the dedicated control-mode (`-CC`) trace ring — attach path, window-
-  // list snapshots, parsed notifications, gesture resolutions — so ONE report
-  // fully diagnoses a "not switching" issue. Scrubbed like the others (it
-  // carries only ids/indices/commands, never terminal content).
-  final scrubbedControlModeTrace = controlModeTrace
-      .map(scrubSecrets)
-      .toList(growable: false);
-
   return <String, Object?>{
     'title': title,
     // FULL comment — the server stores this untruncated (#661).
@@ -167,8 +158,6 @@ Map<String, Object?> buildFeedbackPayload({
       'gestureLog': scrubbedGestureLog,
     if (includeTraces && scrubbedLifecycleLog.isNotEmpty)
       'lifecycleLog': scrubbedLifecycleLog,
-    if (includeTraces && scrubbedControlModeTrace.isNotEmpty)
-      'controlModeTrace': scrubbedControlModeTrace,
     // #790: the replay-harness trace. byteTrace = raw bytes that reached the
     // Terminal ({tMs,b64}); scrollTrace = scroll-offset events ({tMs,offset});
     // grid = the active session's viewport {cols,rows}. The server (#790)
@@ -404,7 +393,6 @@ class _FeedbackOverlayState extends State<FeedbackOverlay> {
     final connectLog = connectLogSnapshot();
     final gestureLog = gestureLogSnapshot();
     final lifecycleLog = lifecycleLogSnapshot();
-    final controlModeTrace = controlModeLogSnapshot();
     // #790: the byte/scroll recorder is BACKWARD-looking, so snapshot it at the
     // END (just before the sheet) where the trace covers the bug the owner just
     // reproduced. Captured below after the frame burst.
@@ -451,7 +439,6 @@ class _FeedbackOverlayState extends State<FeedbackOverlay> {
       connectLog: connectLog,
       gestureLog: gestureLog,
       lifecycleLog: lifecycleLog,
-      controlModeTrace: controlModeTrace,
       // #790: backward-looking — snapshot NOW so the trace covers the bug just
       // reproduced during the burst. #1109-A: raw output — only fetched when raw
       // diagnostics are compiled in (else the snapshot call is tree-shaken out).
@@ -517,7 +504,6 @@ class _FeedbackOverlayState extends State<FeedbackOverlay> {
     final connectLog = connectLogSnapshot();
     final gestureLog = gestureLogSnapshot();
     final lifecycleLog = lifecycleLogSnapshot();
-    final controlModeTrace = controlModeLogSnapshot();
     // #790: snapshot the byte/scroll recorder at the EXACT moment of tap — it's
     // backward-looking, so the rings hold the input + scroll that produced the
     // current (buggy) frame the owner is reporting. #1109-A: byteTrace is raw
@@ -548,7 +534,6 @@ class _FeedbackOverlayState extends State<FeedbackOverlay> {
       connectLog: connectLog,
       gestureLog: gestureLog,
       lifecycleLog: lifecycleLog,
-      controlModeTrace: controlModeTrace,
       byteTrace: byteTrace,
       scrollTrace: scrollTrace,
       sentSgrTrace: sentSgrTrace,
@@ -566,7 +551,6 @@ class _FeedbackOverlayState extends State<FeedbackOverlay> {
     required List<String> connectLog,
     required List<String> gestureLog,
     required List<String> lifecycleLog,
-    List<String> controlModeTrace = const <String>[],
     List<String> frameDataUrls = const <String>[],
     List<Map<String, Object?>> byteTrace = const <Map<String, Object?>>[],
     List<Map<String, Object?>> scrollTrace = const <Map<String, Object?>>[],
@@ -594,7 +578,6 @@ class _FeedbackOverlayState extends State<FeedbackOverlay> {
           connectLog: connectLog,
           gestureLog: gestureLog,
           lifecycleLog: lifecycleLog,
-          controlModeTrace: controlModeTrace,
           byteTrace: byteTrace,
           scrollTrace: scrollTrace,
           sentSgrTrace: sentSgrTrace,
@@ -623,7 +606,6 @@ class _FeedbackOverlayState extends State<FeedbackOverlay> {
         connectLog: connectLog,
         gestureLog: gestureLog,
         lifecycleLog: lifecycleLog,
-        controlModeTrace: controlModeTrace,
         byteTrace: byteTrace,
         scrollTrace: scrollTrace,
         sentSgrTrace: sentSgrTrace,
@@ -764,7 +746,6 @@ class _FeedbackReviewSheet extends StatefulWidget {
     required this.connectLog,
     required this.gestureLog,
     required this.lifecycleLog,
-    this.controlModeTrace = const <String>[],
     required this.byteTrace,
     required this.scrollTrace,
     required this.sentSgrTrace,
@@ -787,7 +768,6 @@ class _FeedbackReviewSheet extends StatefulWidget {
   final List<String> connectLog;
   final List<String> gestureLog;
   final List<String> lifecycleLog;
-  final List<String> controlModeTrace;
   final List<Map<String, Object?>> byteTrace;
   final List<Map<String, Object?>> scrollTrace;
   final List<Map<String, Object?>> sentSgrTrace;
@@ -924,8 +904,7 @@ class _FeedbackReviewSheetState extends State<_FeedbackReviewSheet> {
   int get _traceLineCount =>
       widget.connectLog.length +
       widget.gestureLog.length +
-      widget.lifecycleLog.length +
-      widget.controlModeTrace.length;
+      widget.lifecycleLog.length;
 
   @override
   Widget build(BuildContext context) {
@@ -1145,7 +1124,6 @@ class _FeedbackReviewSheetState extends State<_FeedbackReviewSheet> {
       ...widget.connectLog,
       ...widget.gestureLog,
       ...widget.lifecycleLog,
-      ...widget.controlModeTrace,
     ].map(scrubSecrets).toList(growable: false);
     if (scrubbed.isEmpty) return const SizedBox.shrink();
     return Theme(

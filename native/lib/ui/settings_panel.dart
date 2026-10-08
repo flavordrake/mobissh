@@ -2,8 +2,8 @@
 //
 // #1257: five non-collapsing sections (Connections / Terminal / Links & paths /
 // Background / About & updates). The per-type detection switches and the
-// exceptions list live in the Detection lab; experimental items (tmux control
-// mode, Force upload, Connection audit) sit behind Settings → Advanced's
+// exceptions list live in the Detection lab; experimental items (Force upload,
+// Connection audit) sit behind Settings → Advanced's
 // "Show experimental settings" switch (settings_screen.dart). The page bottom
 // holds [SettingsResetButton].
 
@@ -16,9 +16,7 @@ import '../state/detection_providers.dart';
 import '../state/detection_style_providers.dart';
 import '../state/feature_flags_providers.dart';
 import '../state/keepalive_providers.dart';
-import '../state/sessions.dart';
 import '../state/terminal_backend.dart';
-import '../state/tmux_control_mode_setting.dart';
 import '../state/ui_prefs_providers.dart';
 import 'detection_lab_screen.dart';
 import 'feedback_overlay.dart' show VersionResolver, resolveBuildVersion;
@@ -303,49 +301,6 @@ class _BatteryOptRowState extends ConsumerState<_BatteryOptRow> {
   }
 }
 
-/// #913 tmux control-mode (`tmux -CC`) opt-in, default OFF. #1257: an
-/// experimental setting, shown in Settings → Advanced only while "Show
-/// experimental settings" is on; hiding it never changes its value.
-class TmuxControlModeTile extends ConsumerWidget {
-  const TmuxControlModeTile({super.key});
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final controlMode = ref.watch(tmuxControlModeProvider);
-    return SwitchListTile(
-      key: const ValueKey('tmux-control-mode-toggle'),
-      secondary: const Icon(Icons.cable_outlined),
-      title: const Text('tmux control mode'),
-      subtitle: const Text(
-        'Drive tmux via control mode (-CC): authoritative windows/size + '
-        'real switch gestures. Requires tmux on the host. Live sessions '
-        'reconnect to apply.',
-      ),
-      value: controlMode,
-      onChanged: (v) async {
-        // #913: persist + sync the per-isolate global (read at connect time).
-        await ref.read(tmuxControlModeProvider.notifier).set(v);
-        // #916: the flag is read ONCE at connect, so reconnect every connected
-        // session for the new mode to engage, and say so.
-        final reconnected = ref
-            .read(sessionsProvider.notifier)
-            .reconnectForControlModeChange();
-        if (reconnected > 0 && context.mounted) {
-          final mode = v ? 'control mode' : 'scrape mode';
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                'Reconnecting $reconnected session'
-                '${reconnected == 1 ? '' : 's'} to apply $mode…',
-              ),
-            ),
-          );
-        }
-      },
-    );
-  }
-}
-
 /// #897 destructive reset, at the very bottom of the Settings page. Confirms,
 /// then restores every persisted user pref to its documented default via each
 /// provider's own setter (no key wipe, no schema bump), so the UI updates live.
@@ -380,7 +335,7 @@ class SettingsResetButton extends ConsumerWidget {
         content: const Text(
           'Restore all MobiSSH settings — text size, default font, '
           'keep-alive, link/path detection, detection lab tuning, '
-          'experimental settings and tmux control mode — to their defaults. '
+          'and experimental settings — to their defaults. '
           'Saved profiles, credentials, and detection exceptions are not '
           'affected.',
         ),
@@ -403,7 +358,6 @@ class SettingsResetButton extends ConsumerWidget {
     await ref.read(fontFamilyProvider.notifier).set(fontFamilyDefault);
     await ref.read(terminalBackendProvider.notifier).set(terminalBackendDefault);
     await ref.read(keepaliveEnabledProvider.notifier).set(keepaliveEnabledDefault);
-    await ref.read(tmuxControlModeProvider.notifier).set(tmuxControlModeDefault);
     // #1257: the experimental-settings flag resets with the rest.
     await ref.read(featureFlagsProvider.notifier).reset();
     // Detection has no single-shot reset; restore each field to its default
