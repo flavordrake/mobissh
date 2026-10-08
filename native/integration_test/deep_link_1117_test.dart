@@ -111,6 +111,8 @@ Future<({bool reachedShell, bool sawConfirm, bool sawTrust, bool sawPicker})>
     if (_confirmDialog.evaluate().isNotEmpty) {
       sawConfirm = true;
       if (tapConnectOnce) {
+        // #1279 G1: the button arms 400 ms after the dialog appears.
+        await tester.pump(const Duration(milliseconds: 450));
         await tester.tap(find.byKey(const Key('link-confirm-once')));
         await tester.pump(const Duration(milliseconds: 300));
       }
@@ -382,6 +384,8 @@ void main() {
     // Run → exactly one sendNow; the bytes land in the live PTY (echoed) and
     // the session is still attached to e1117 (`-A` inside tmux is a no-op).
     final sinceTap = out.length;
+    // #1279 G1: Run arms 400 ms after the dialog appears.
+    await tester.pump(const Duration(milliseconds: 450));
     await tester.tap(find.byKey(const Key('link-verb-run')));
     await tester.pump(const Duration(milliseconds: 300));
     expect(_runDialog, findsNothing, reason: 'A11: Run did not close the dialog');

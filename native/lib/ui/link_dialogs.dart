@@ -5,6 +5,13 @@
 // exact command that will run (R16, #1149). R14 picker: lists ONLY the R9
 // candidates; the router always confirms afterwards. R23(b) run dialog: a
 // live session never receives a verb until this is tapped (#1149).
+//
+// #1279 G1 / F8 tap-through guard: a link can make a dialog appear under a
+// finger that was already coming down on something else. The buttons that
+// ACCEPT (Connect once, Always allow, Run) stay disabled for
+// [linkDialogArmDelay] after the dialog is shown; Cancel is live at once.
+
+import 'dart:async';
 
 import 'package:flutter/material.dart';
 
@@ -12,8 +19,43 @@ import '../services/connect_link_router.dart';
 import '../services/link_verb.dart';
 import '../storage/profiles_store.dart';
 
+/// How long the accepting buttons of a link dialog stay inert (F8).
+const Duration linkDialogArmDelay = Duration(milliseconds: 400);
+
 String _titleOf(SavedProfile profile) =>
     profile.title.isEmpty ? profile.host : profile.title;
+
+/// Builds [builder] with `armed == false` until [linkDialogArmDelay] has
+/// passed since this widget was first shown.
+class _ArmAfterDelay extends StatefulWidget {
+  const _ArmAfterDelay({required this.builder});
+  final Widget Function(BuildContext context, bool armed) builder;
+
+  @override
+  State<_ArmAfterDelay> createState() => _ArmAfterDelayState();
+}
+
+class _ArmAfterDelayState extends State<_ArmAfterDelay> {
+  bool _armed = false;
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _timer = Timer(linkDialogArmDelay, () {
+      if (mounted) setState(() => _armed = true);
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.builder(context, _armed);
+}
 
 Future<LinkConfirmChoice?> showLinkConfirmDialog(
   BuildContext context,
@@ -23,7 +65,7 @@ Future<LinkConfirmChoice?> showLinkConfirmDialog(
   final title = _titleOf(profile);
   return showDialog<LinkConfirmChoice>(
     context: context,
-    builder: (ctx) => AlertDialog(
+    builder: (_) => _ArmAfterDelay(builder: (ctx, armed) => AlertDialog(
       key: const Key('link-confirm-dialog'),
       title: Text('Open $title from a link?'),
       content: Column(
@@ -50,16 +92,20 @@ Future<LinkConfirmChoice?> showLinkConfirmDialog(
         ),
         TextButton(
           key: const Key('link-confirm-always'),
-          onPressed: () => Navigator.of(ctx).pop(LinkConfirmChoice.always),
+          onPressed: armed
+              ? () => Navigator.of(ctx).pop(LinkConfirmChoice.always)
+              : null,
           child: Text('Always allow links to open $title'),
         ),
         FilledButton(
           key: const Key('link-confirm-once'),
-          onPressed: () => Navigator.of(ctx).pop(LinkConfirmChoice.once),
+          onPressed: armed
+              ? () => Navigator.of(ctx).pop(LinkConfirmChoice.once)
+              : null,
           child: const Text('Connect once'),
         ),
       ],
-    ),
+    )),
   );
 }
 
@@ -75,7 +121,7 @@ Future<bool> showLinkVerbRunDialog(
   final title = _titleOf(profile);
   final run = await showDialog<bool>(
     context: context,
-    builder: (ctx) => AlertDialog(
+    builder: (_) => _ArmAfterDelay(builder: (ctx, armed) => AlertDialog(
       key: const Key('link-verb-run-dialog'),
       title: Text('Run in $title?'),
       content: Column(
@@ -98,11 +144,11 @@ Future<bool> showLinkVerbRunDialog(
         ),
         FilledButton(
           key: const Key('link-verb-run'),
-          onPressed: () => Navigator.of(ctx).pop(true),
+          onPressed: armed ? () => Navigator.of(ctx).pop(true) : null,
           child: const Text('Run'),
         ),
       ],
-    ),
+    )),
   );
   return run ?? false;
 }

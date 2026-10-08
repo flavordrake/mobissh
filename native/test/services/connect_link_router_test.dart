@@ -15,6 +15,8 @@
 //      a live same-identity session ALWAYS asks (`confirmSend`) before the
 //      router hands it to the send seam — regardless of linkAutoConnect.
 
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mobissh/services/connect_intent.dart';
 import 'package:mobissh/services/connect_link_router.dart';
@@ -41,6 +43,8 @@ class _Spy {
   Set<String> attached = {}; // `sid session` pairs the app attached via a link
   int rejections = 0;
   LinkConfirmChoice? confirmAnswer = LinkConfirmChoice.once;
+  // #1279 G1: when set, the confirm dialog stays open until completed.
+  Completer<LinkConfirmChoice?>? confirmGate;
   bool confirmSendAnswer = true;
   SavedProfile? pickAnswer;
   List<LiveSessionRef> live = const [];
@@ -54,6 +58,8 @@ class _Spy {
         confirm: (p, verb) async {
           confirmed.add(p);
           confirmedVerbs.add(verb);
+          final gate = confirmGate;
+          if (gate != null) return gate.future;
           return confirmAnswer;
         },
         confirmSend: (p, verb) async {
@@ -456,6 +462,117 @@ void main() {
       await router.consumePending();
       expect((spy.connectedVerbs.single! as TmuxAttach).window, 'beta');
       expect(spy.log.join('\n'), isNot(contains('beta')));
+    });
+  });
+
+  // #1279 G1 / F8: at most one link in flight. A link that arrives while one
+  // is being confirmed is DROPPED — never stacked, never swapped in under the
+  // user's tap — and leaves no banner and no pending record behind.
+  group('G1 one link in flight', () {
+    test('a burst of three shows one confirm; two are dropped as busy',
+        () async {
+      spy.confirmGate = Completer<LinkConfirmChoice?>();
+      final first =
+          router.deliver('mobissh://connect?host=box.example&user=alice');
+      await pumpEventQueue();
+      await router.deliver('mobissh://connect?host=box.example&user=bob');
+      await router.deliver('mobissh://connect?host=box.example&user=alice');
+      expect(spy.confirmed.map((p) => p.identityKey), [_alice.identityKey]);
+      expect(spy.log.where((l) => l.contains('dropped reason=busy')).length,
+          2);
+      expect(spy.rejections, 0, reason: 'a dropped link shows no banner');
+
+      spy.confirmGate!.complete(LinkConfirmChoice.once);
+      await first;
+      expect(spy.connected.map((p) => p.identityKey), [_alice.identityKey],
+          reason: 'the pending link was not replaced by a later one');
+      expect(await store.getString('mobissh.link.pending'), isNull);
+    });
+
+    test('a rejected link during a confirm is dropped, not bannered',
+        () async {
+      spy.confirmGate = Completer<LinkConfirmChoice?>();
+      final first =
+          router.deliver('mobissh://connect?host=box.example&user=alice');
+      await pumpEventQueue();
+      await router.deliver('mobissh://nope');
+      expect(spy.rejections, 0);
+      spy.confirmGate!.complete(null);
+      await first;
+    });
+
+    test('the guard is released after a link completes or a seam throws',
+        () async {
+      spy.confirmGate = Completer<LinkConfirmChoice?>();
+      final first =
+          router.deliver('mobissh://connect?host=box.example&user=alice');
+      await pumpEventQueue();
+      spy.confirmGate!.completeError(StateError('dialog torn down'));
+      await expectLater(first, throwsStateError);
+
+      spy.confirmGate = null;
+      await router.deliver('mobissh://connect?host=box.example&user=bob');
+      expect(spy.connected.map((p) => p.identityKey), [_bob.identityKey]);
+    });
+
+    test('an open create editor holds the guard until it closes', () async {
+      final editor = Completer<void>();
+      final r = ConnectLinkRouter(
+        bridge: PendingLinkBridge(store),
+        loadProfiles: () async => spy.profiles,
+        liveSessions: () => const [],
+        setActive: (_) {},
+        confirm: (_, _) async => LinkConfirmChoice.once,
+        confirmSend: (_, _) async => false,
+        pick: (_) async => null,
+        persistAutoConnect: (_) async {},
+        connectProfile: (p, _) async => spy.connected.add(p),
+        sendVerb: (_, _) {},
+        isTmuxAttached: (_, _) => false,
+        selectWindow: (_, _) async {},
+        openCreate: (p) => editor.future,
+        reject: () => spy.rejections++,
+        log: (where, msg) => spy.log.add('$where: $msg'),
+      );
+      final first = r.deliver('mobissh://connect?host=unknown.example');
+      await pumpEventQueue();
+      await r.deliver('mobissh://connect?host=box.example&user=alice');
+      expect(spy.connected, isEmpty);
+      expect(spy.log.where((l) => l.contains('dropped reason=busy')), hasLength(1));
+      editor.complete();
+      await first;
+    });
+  });
+
+  // #1279 S1: the parser accepts sftp links, but routing them is S2. Until
+  // then an sftp request must NOT degrade into a plain connect that drops the
+  // path (the G3 failure mode) — it is rejected.
+  group('S1 sftp links are not routed yet', () {
+    for (final link in [
+      'sftp://alice@box.example/home/alice',
+      'mobissh://sftp?host=box.example&user=alice&path=/x',
+    ]) {
+      test(link, () async {
+        spy.profiles = [_alice.copyWith(linkAutoConnect: true)];
+        await router.deliver(link);
+        expect(spy.connected, isEmpty);
+        expect(spy.confirmed, isEmpty);
+        expect(spy.created, isEmpty);
+        expect(spy.rejections, 1);
+        expect(spy.log.join('\n'), isNot(contains('alice')));
+      });
+    }
+
+    test('the pending record carries the validated path', () async {
+      final bridge = PendingLinkBridge(store);
+      await bridge.setPending(const ConnectRequest(
+        verb: ConnectVerb.sftp,
+        host: 'box.example',
+        path: '~/x',
+      ));
+      final back = await bridge.readPending();
+      expect(back?.verb, ConnectVerb.sftp);
+      expect(back?.path, '~/x');
     });
   });
 }

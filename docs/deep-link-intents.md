@@ -23,7 +23,7 @@ Out of scope, permanently or until its own document:
 - `ssh://` (other terminals claim it and its `user:pass@host` form carries credentials).
 - Any credential, key, passphrase or token in a link.
 - A free-text command parameter. Every command mobissh runs from a link is a locked template with an allowlisted argument.
-- Remote path / file navigation (`fd`), which touches the hardened viewer surface and needs its own security pass.
+- Remote path / file navigation (`fd`), which touches the hardened viewer surface and needs its own security pass. That pass is #1279: the `sftp://` handler and the `mobissh://sftp` verb, §15.
 - App Links / Universal Links (verified https). Anti-squatting upgrade later; macOS Universal Links need a signed app.
 
 ## 3. Grammar
@@ -51,6 +51,8 @@ v1.1 extensions on `connect` only, mutually exclusive:
 - R6 `tmux` is `^[A-Za-z0-9_][A-Za-z0-9_-]{0,31}$` (no leading hyphen: the token is always the argument of `-s`, but a leading `-` would complicate every probe and future target command for no benefit — codex review 2026-09-12). `claude` is a UUID, `^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`.
 - R6a (#1211) `window` uses the R6 shape, so it can never carry `:` or `.` to re-target another session or pane. It is only valid alongside `tmux` on `connect`; `window` without `tmux`, or on `create`, rejects the whole link with `badParam(window)`.
 - R7 Unknown parameters are ignored so the grammar can grow; a known parameter that fails its rule rejects the whole link. A parameter that names an action mobissh does not implement yet (`claude=` until R24 ships) rejects the whole link rather than degrading into a plain `connect` — a caller asking for a command must never silently get less than it asked for.
+- R7a (#1279 G3) The same rule covers what §11 tells callers is rejected. `path=` is valid only on `sftp` (§15); on `connect` or `create` it rejects the whole link with `badParam(path)`. A credential-named key (`password`, `pass`, `passwd`, `pw`, `passphrase`, `key`, `identity`, `token`, `secret`) rejects with `credentialInLink(<key>)`, and a command-named key (`cmd`, `command`, `exec`, `run`, `shell`) with `reserved(<key>)`. These are fixed lists; every other unknown key is still ignored.
+- R7b (#1279) A link longer than 8192 characters rejects with `tooLong`.
 
 ## 4. Profile matching
 
@@ -67,6 +69,8 @@ The referrer of a `VIEW` intent (`Activity.getReferrer()`, `EXTRA_REFERRER`) is 
 - R13 With `linkAutoConnect` set, `connect` proceeds with no prompt. The setting is visible and revocable in the profile editor and is not included in backups by default (same posture as `initialCommand` import, `native/lib/storage/backup_restore.dart`). The flag is destination trust, so it is bound to the identity it was granted for: it resets to false whenever host, port or username is edited; a plain (metadata) profile import never sets it; an encrypted backup restores it only through the existing explicit "also restore auto-run" opt-in. A trust bit that travelled with a JSON file would be #1106's portable-handle mistake again.
 - R13a Auto-connect supplies only authentication material already stored for that profile (password, key, stored passphrase). It never accepts a host key, answers a keyboard-interactive challenge, or dismisses any lower-layer prompt; when the stored material is incomplete the link falls back to the confirmation path, it does not fail silently.
 - R14 `create`, an unmatched host, and a picker result (R9) always confirm. `create` never auto-connects.
+- R14a (#1279 G2, F4) When a link opens the create editor (`create`, or an unmatched host), the editor shows a banner that cannot be dismissed: "This host came from a link and is not saved. Check the host, port and username before you connect or pick a key." (`profile-editor-link-provenance`). It is on screen from the first frame, before the key-library picker can attach a stored key, and so send its signature, to a host the link chose.
+- R14b (#1279 G1, F8) One link at a time. From parse until the confirmation, picker or editor is answered and the connect hand-off is made, a link is in flight; a link that arrives meanwhile is dropped (`dropped reason=busy`, no banner, the pending record untouched). It never queues behind the first, and never replaces it, because a swap under the user's tap is the attack. The accepting buttons (`Connect once`, `Always allow`, `Run`) are disabled for 400 ms after their dialog appears, so a dialog that pops up under a finger cannot take that tap; `Cancel` works at once.
 - R15 The host-key policy is unchanged: an unknown host key blocks on the existing TOFU dialog; a mismatch fails closed. A link never pre-trusts a key, and `linkAutoConnect` does not skip the dialog. Today the TOFU listener lives in `ConnectForm`'s State (`native/lib/ui/connect_form.dart`), which is unmounted while a terminal is showing; a link connect must guarantee the prompt is reachable from wherever it starts (a warm link with another session live is the case A9 must cover), or a session for an unknown host would sit at `awaitingHostKey` forever.
 - R16 The v1.1 verbs require `linkAutoConnect` OR the per-link confirmation, and the confirmation names the command that will run (`tmux new-session -A -s foo`).
 
@@ -79,6 +83,7 @@ Owner decision recorded 2026-08-21 as pending: destination-based trust as above 
 - R19 A link received while mobissh is already in the foreground is handled the same way as one that launches it (`onNewIntent` path; `MainActivity` is `singleTop`).
 - R20 Back from the terminal returns to the caller through the normal Android task stack. No return URI in v1; whether `taskAffinity=""` puts the terminal in mobissh's own task and breaks that expectation is verified on hardware before v1 ships, and a `return=<uri>` parameter is added only if it does.
 - R21 The result of a link is reported on the terminal screen, not in a toast the user can miss: connected, focused, or which error (§8).
+- R21a (#1279 G4) A jump chain that cannot be resolved (cycle, too deep, a hop with no stored credential) shows a persistent banner on the profile list naming the hop (`jump-host-error-banner`), until dismissed or a later connect resolves its chain. This applies to every connect, not only link ones.
 
 ## 7. v1.1 verbs: locked templates
 
@@ -99,7 +104,7 @@ Owner decision recorded 2026-08-21 as pending: destination-based trust as above 
 
 - R28 Android: `intent-filter` with `VIEW`, `DEFAULT`, `BROWSABLE` and `<data android:scheme="mobissh"/>` on `.MainActivity` (`native/android/app/src/main/AndroidManifest.xml`). Delivery through the `app_links` package (cold + warm) or a `mobissh/links` MethodChannel from `onNewIntent`/`getIntent`; the package is preferred unless it drags a dependency the gate rejects.
 - R29 macOS: `CFBundleURLTypes` for `mobissh` in `Info.plist`; works unsigned. iOS: same key, lands when the signing gate lifts.
-- R30 Callers on Android 11+ must declare package visibility for the scheme; the caller contract (§11) says so. mobissh itself needs no `<queries>` change.
+- R30 A caller on Android 11+ needs a `<queries>` entry for the scheme only to resolve the handler first (`canLaunchUrl`, `resolveActivity`); a plain launch (`startActivity`, `launchUrl` with `LaunchMode.externalApplication`) does not need one. §11 says so. mobissh itself needs no `<queries>` change.
 
 ## 10. Data model changes
 
@@ -111,10 +116,11 @@ Owner decision recorded 2026-08-21 as pending: destination-based trust as above 
 
 Published with the feature so opsurface and others build to the same rules:
 
-- Fire `mobissh://connect?host=<fqdn>&user=<u>` with `LaunchMode.externalApplication`; declare `<queries><intent><action android:name="android.intent.action.VIEW"/><data android:scheme="mobissh"/></intent></queries>` or the launch throws on Android 11+.
+- Fire `mobissh://connect?host=<fqdn>&user=<u>` with `LaunchMode.externalApplication`. If you check first with `canLaunchUrl` (or `resolveActivity`), declare `<queries><intent><action android:name="android.intent.action.VIEW"/><data android:scheme="mobissh"/></intent></queries>`: without it that check returns false on Android 11+. The launch itself does not need it (R30).
+- Fire one link per user action. A link that arrives while mobissh is still handling another is dropped (R14b), and the confirm buttons ignore taps for the first 400 ms.
 - Expect no result. Expect the first tap per profile to confirm. A `connect` naming a host the user has not saved opens mobissh's create form pre-filled from the link (R9/R14) — the user still confirms; nothing connects on its own. A `connect?name=` with an unknown alias shows `Link not recognized`; fall back to the host form in that case.
 - `tmux=` names match `^[A-Za-z0-9_][A-Za-z0-9_-]{0,31}$` (no leading hyphen). `window=` (#1211) uses the same shape, needs `tmux=`, and names the window exactly (no prefix match); a missing window is a notice, never a new window. `claude=` is reserved and rejects the whole link until it ships.
-- Do not put a command, a path or a credential in the link; it is rejected.
+- Do not put a command or a credential in the link, and put a path only on `sftp` (§15). Such a link is rejected as a whole, never connected with the parameter dropped (R7a).
 
 ## 12. Acceptance
 
@@ -122,6 +128,8 @@ Unit (`native/test/services/connect_intent_test.dart`, no Flutter imports):
 - A1 Each grammar row in §3 parses to the expected `ConnectRequest`; each R2–R7 violation rejects with its reason; a duplicated key rejects; a value with a trailing space rejects.
 - A2 `ssh://`, `mobissh://open`, `mobissh://connect?host=user:pw@h` reject.
 - A3 R8–R11 matching against a fixture profile list: exact match, host-only single, host-only ambiguous, alias hit, alias miss, unknown host → create.
+- A16 (#1279, `native/test/services/sftp_intent_test.dart`) §15 accept and reject tables, each rejection with its reason, and a seeded 10k-mutation fuzz: never throws, every accepted path holds the F6 invariants, every accepted absolute path round-trips through `sftpUrlForRemotePath`. R7a cases in `connect_intent_test.dart`.
+- A17 (#1279, router + widget tests) R14b: a burst of three links shows one confirmation and drops two; the accepting buttons are inert for 400 ms. R14a: the provenance banner is present and cannot be dismissed. R21a: a jump failure is a banner still showing seconds later.
 
 Widget / state (`native/test/state/`):
 - A4 First-time connect shows the R12 confirmation; `Always allow` persists `linkAutoConnect`; the next link skips the prompt; revoking in the editor restores it.
@@ -149,3 +157,23 @@ Integration (`native/integration_test/deep_link_1117_test.dart`, emulator, `adb 
 - Whether R9's host-only match is allowed at all or `user` is mandatory. Decided 2026-09-12: allowed, picker on ambiguity.
 - Whether `linkAutoConnect` travels in encrypted backups. Decided 2026-09-12: not by default, same as `initialCommand`.
 - R23 on a LIVE session (codex finding 7): `sendInput` is indistinguishable from typing, and shell-ready only proves a shell existed once — the bytes could land in an editor, a password prompt, a nested ssh. Options: (a) keep R23 as written; (b) on a live session always show an in-terminal confirmation naming the command, regardless of `linkAutoConnect`, and send only on that tap (fresh connects still arm on shell-ready with no prompt); (c) send unprompted only when tmux control mode confirms the foreground is a shell, else (b). Recommendation: (b) for v1.1 — one tap, no probe race, no new channel; (c) once control mode is on by default. RESOLVED as (b) in #1149 (PR E); R23 above is the shipped text.
+
+## 15. `sftp://` links and the `sftp` verb (#1279)
+
+Design, security model and owner decisions D1–D6 are on #1279; requirement ids there are `F<n>`. Status: slice S1 (parser) is in. Until slice S2 routes them, an accepted sftp link is rejected at the router (`reason=notRouted`, the `Link not recognized` banner) instead of becoming a plain connect that drops its path. The Android `sftp` intent filter lands in S3.
+
+```
+sftp://[user[;c-param*(,c-param)]@]host[:port][/path]
+mobissh://sftp?host=<h>[&port=<n>][&user=<u>][&path=<pct-encoded>]
+mobissh://sftp?name=<alias>[&path=<pct-encoded>]
+```
+
+Parsing is hand-rolled like §3 (`native/lib/services/sftp_intent.dart`, `parseLink` dispatches on the scheme). It yields a `ConnectRequest` with `verb: sftp` and a validated `path`.
+- The `sftp` scheme and the host are case-insensitive. `mobissh://` keeps R1–R7.
+- F2 (D2): any `:` in the userinfo (`u:pw@`, `u:@`, an encoded `%3A`) rejects the whole link with `credentialInLink`. The password is never stripped and the link never continued.
+- F1 (D5): `;fingerprint=` must match `^[A-Za-z0-9-]{1,256}$` and is then ignored: it never trusts, pre-fills or skips a host key. Unknown c-params are ignored; a repeated one rejects (`duplicateKey`).
+- Host per R3 (an IPv6 zone id rejects), port per R4 (`host:` with an empty port rejects). Exactly one `@`. A query or fragment rejects.
+- F6 path rules (`badPath`): the path is split on `/` before a single decode, so an encoded `/` (`%2F`) rejects. `.`/`..` segments (encoded too), empty segments (one trailing `/` is kept as a directory hint), NUL/C0/DEL, invalid or overlong UTF-8, a segment over 255 bytes, a path over 4096 bytes or more than 64 segments all reject. `%252e` decodes once to the literal name `%2e`, which is allowed.
+- `/~` and `/~/rest` are home-relative (`~`, `~/rest`); `/~user` rejects. Absent path means the profile's default directory.
+- `;` in the path is a literal character, and `;type=` is not interpreted (D5), so #994's "Copy sftp:// URL" output round-trips. That helper now escapes a literal `%` in a file name, so the URL names the file it was copied from.
+- On `mobissh://sftp`, `path` is decoded once with the other parameters and must start with `/` or `~`. `tmux`/`window` on `sftp` reject (`badParam`), as `path` does on `connect`/`create` (R7a). `name=` resolves through the alias as on `connect`.

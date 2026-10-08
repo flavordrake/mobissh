@@ -63,6 +63,8 @@
 //   - a known param failing its R3–R6 rule, or `tmux` on `create` -> badParam(key)
 //   - a key appearing twice                                   -> duplicateKey(key)
 //   - `claude=`                                               -> reserved('claude')
+//   - #1279 G3: `path=` off `sftp` -> badParam(path); a credential key
+//     -> credentialInLink(key); a command key -> reserved(key)
 // Bracketed IPv6 is accepted and stored WITHOUT brackets: the brackets are URI
 // syntax, the raw address is what the socket layer takes.
 
@@ -550,6 +552,39 @@ void main() {
     test('claude= with a non-UUID value never degrades to a plain connect', () {
       parseRejected('mobissh://connect?host=box.example.com&claude=nope');
     });
+  });
+
+  // #1279 G3: §11 tells callers a path, a command or a credential in the link
+  // is rejected. R7 ignored unknown keys, so `path=` connected and silently
+  // dropped the path. These keys now reject the whole link.
+  group('G3 — path / credential / command keys reject the whole link (§11)',
+      () {
+    test('path= on connect is badParam(path)', () {
+      expectBadParam('mobissh://connect?host=box.example.com&path=/x', 'path');
+    });
+
+    test('path= on create is badParam(path)', () {
+      expectBadParam('mobissh://create?host=box.example.com&path=/x', 'path');
+    });
+
+    for (final k in [
+      'password', 'pass', 'passwd', 'pw', 'passphrase', 'key', 'identity',
+      'token', 'secret',
+    ]) {
+      test('$k= is credentialInLink', () {
+        expectReject('mobissh://connect?host=box.example.com&$k=x',
+            ConnectIntentReason.credentialInLink,
+            key: k);
+      });
+    }
+
+    for (final k in ['cmd', 'command', 'exec', 'run', 'shell']) {
+      test('$k= is reserved', () {
+        expectReject('mobissh://connect?host=box.example.com&$k=ls',
+            ConnectIntentReason.reserved,
+            key: k);
+      });
+    }
   });
 
   group('A3 matching (R8–R11)', () {
