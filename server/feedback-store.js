@@ -454,10 +454,21 @@ function dispatchJsonRoute(route, data, reportDir) {
   }
 }
 
+// #1290: uploads grew to 6751 files / 1.6 GB with no sweep, so the default is
+// now a window; an explicit 0 is the keep-forever opt-out.
+const DEFAULT_RETENTION_DAYS = 90;
+
+/** Retention window in days from FEEDBACK_RETENTION_DAYS: unset/empty → 90, 0 → keep everything. */
+function retentionDays(env) {
+  const raw = env.FEEDBACK_RETENTION_DAYS;
+  if (raw === undefined || raw === '') return DEFAULT_RETENTION_DAYS;
+  const n = parseInt(raw, 10);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
 /**
  * Retention sweep: delete files in reportDir older than `days` (by mtime).
- * days <= 0 means keep everything (the default — the owner keeps traces;
- * storage is cheap). Returns the number of files deleted.
+ * days <= 0 means keep everything. Returns the number of files deleted.
  */
 function sweepRetention(reportDir, days) {
   if (!days || days <= 0) return 0;
@@ -493,5 +504,6 @@ module.exports = {
   saveNativeCrash,
   saveBugReport,
   handleFeedbackRequest,
+  retentionDays,
   sweepRetention,
 };

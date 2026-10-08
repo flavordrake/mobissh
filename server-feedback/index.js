@@ -21,8 +21,8 @@
  *   PORT                    listen port (default 8082)
  *   HOST                    bind address (default 0.0.0.0)
  *   UPLOADS_DIR             storage dir (default ../test-results/uploads)
- *   FEEDBACK_RETENTION_DAYS retention knob; 0/unset = keep everything
- *                           (default — the owner keeps traces, storage is cheap)
+ *   FEEDBACK_RETENTION_DAYS retention window; unset = 90 days, 0 = keep
+ *                           everything (#1290). Swept on boot and daily.
  */
 
 const http = require('http');
@@ -36,7 +36,7 @@ const HOST = process.env.HOST || '0.0.0.0';
 const UPLOADS_DIR = process.env.UPLOADS_DIR
   ? path.resolve(process.env.UPLOADS_DIR)
   : path.resolve(__dirname, '..', 'test-results', 'uploads');
-const RETENTION_DAYS = parseInt(process.env.FEEDBACK_RETENTION_DAYS || '', 10) || 0;
+const RETENTION_DAYS = store.retentionDays(process.env);
 const APP_VERSION = require('./package.json').version || '0.0.0';
 
 let GIT_HASH = 'unknown';
@@ -93,7 +93,7 @@ if (require.main === module) {
   server.listen(PORT, HOST, () => {
     console.log(`[feedback-service] listening on ${HOST}:${PORT} uploads=${UPLOADS_DIR} retention=${RETENTION_DAYS || 'keep-everything'}`);
     fs.mkdirSync(UPLOADS_DIR, { recursive: true });
-    // Retention sweep: on boot + daily. No-op at the default 0 (keep all).
+    // Retention sweep: on boot + daily. No-op at an explicit 0 (keep all).
     store.sweepRetention(UPLOADS_DIR, RETENTION_DAYS);
     setInterval(() => store.sweepRetention(UPLOADS_DIR, RETENTION_DAYS), 24 * 60 * 60 * 1000).unref();
   });

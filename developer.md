@@ -80,7 +80,7 @@ Uploads require the `X-MobiSSH-Key` header and are rate limited (`server/feedbac
 
 `public/termux/mobissh-logcat.sh` is a Termux-side crash forwarder: it watches logcat for the app (`MOBISSH_PKG`, default `com.flavordrake.mobissh`) and posts the last `MOBISSH_CRASH_LINES` lines (default 5000) to `MOBISSH_CRASH_ENDPOINT` (default the tailnet `/api/native-crash`), at most once per `MOBISSH_CRASH_DEBOUNCE` seconds (default 10).
 
-The server's stored fields are an allowlist in `saveBugReport` (`server/feedback-store.js`); a field the app sends but that is not named there is dropped. `FEEDBACK_RETENTION_DAYS` (default 0, keep everything) turns on the sweep in `server-feedback/index.js`.
+The server's stored fields are an allowlist in `saveBugReport` (`server/feedback-store.js`); a field the app sends but that is not named there is dropped. `server-feedback/index.js` sweeps uploads older than `FEEDBACK_RETENTION_DAYS` on boot and then daily (default 90; `0` keeps everything).
 
 On the device, every bug report goes through the outbox (`native/lib/diagnostics/feedback_outbox.dart`): it is written to the outbox before the POST: on Android `getNoBackupFilesDir()/feedback-outbox` (via the `mobissh/paths` channel; excluded from cloud backup and device transfer, old `app_flutter/feedback-outbox` contents migrated once), elsewhere `<app documents>/feedback-outbox/`. Reports older than 30 days are expired. One file per report, the suffix is the state:
 

@@ -21,9 +21,9 @@ services:
       PORT: "8082"
       NODE_ENV: production
       UPLOADS_DIR: /app/test-results/uploads
-      # Retention knob: files older than N days are deleted daily.
-      # 0 (default) keeps everything — the owner keeps traces; storage cheap.
-      FEEDBACK_RETENTION_DAYS: "${FEEDBACK_RETENTION_DAYS:-0}"
+      # Retention window: files older than N days are deleted on boot and daily.
+      # Unset = 90 days (the code default, #1290); 0 keeps everything.
+      FEEDBACK_RETENTION_DAYS: "${FEEDBACK_RETENTION_DAYS:-}"
       # #1115 fail-closed upload auth: feedback-ctl.sh exports this from
       # ~/.mobissh/feedback.env. Unset ⇒ the guard 503s all uploads.
       MOBISSH_FEEDBACK_KEY: "${MOBISSH_FEEDBACK_KEY:-}"

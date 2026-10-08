@@ -12,11 +12,17 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
-const { execSync } = require('child_process');
+const { execFileSync } = require('child_process');
 
-const PORT = Number(process.env.REVIEW_PORT || process.argv.includes('--port')
-  ? process.argv[process.argv.indexOf('--port') + 1]
-  : 9090);
+/** Port precedence (#1287): REVIEW_PORT env, then `--port N`, else 9090. */
+function resolvePort(env, argv) {
+  if (env.REVIEW_PORT) return Number(env.REVIEW_PORT);
+  const i = argv.indexOf('--port');
+  if (i !== -1 && argv[i + 1]) return Number(argv[i + 1]);
+  return 9090;
+}
+
+const PORT = resolvePort(process.env, process.argv);
 
 const REPO = path.resolve(__dirname, '../..');
 
@@ -631,8 +637,26 @@ function archiveTimestamp() {
 
 /** Git HEAD short hash. */
 function gitHash() {
-  try { return execSync('git rev-parse --short HEAD', { cwd: REPO, encoding: 'utf8' }).trim(); }
+  try { return execFileSync('git', ['rev-parse', '--short', 'HEAD'], { cwd: REPO, encoding: 'utf8' }).trim(); }
   catch { return 'unknown'; }
+}
+
+/**
+ * File a GitHub issue through scripts/gh-file-issue.sh. The title is user
+ * input (form field or report.json), so it travels as one argv entry with no
+ * shell in between (#1286). Returns { issueUrl, ghError }.
+ */
+function fileIssue(title, bodyFile) {
+  try {
+    const issueUrl = execFileSync(
+      path.join(REPO, 'scripts/gh-file-issue.sh'),
+      ['--title', title, '--label', 'bug', '--body-file', bodyFile],
+      { cwd: REPO, encoding: 'utf8', timeout: 30000 }
+    ).trim();
+    return { issueUrl, ghError: '' };
+  } catch (e) {
+    return { issueUrl: '', ghError: e.stderr || e.message || 'Unknown error filing issue' };
+  }
 }
 
 /** Copy the current emulator test run into a destination directory. Returns the dir path. */
@@ -804,16 +828,7 @@ function handleFileIssue(req, res) {
     // Save the dir name so we can link it in the response
     fs.writeFileSync(path.join(destDir, 'issue-body.md'), issueBody);
 
-    let issueUrl = '';
-    let ghError = '';
-    try {
-      issueUrl = execSync(
-        `scripts/gh-file-issue.sh --title "${title.replace(/"/g, '\\"')}" --label bug --body-file "${bodyFile}"`,
-        { cwd: REPO, encoding: 'utf8', timeout: 30000 }
-      ).trim();
-    } catch (e) {
-      ghError = e.stderr || e.message || 'Unknown error filing issue';
-    }
+    const { issueUrl, ghError } = fileIssue(title, bodyFile);
 
     if (issueUrl) {
       // Write issue URL into the archive for reference
@@ -912,16 +927,7 @@ function handleFileTestIssue(req, res) {
     fs.writeFileSync(bodyFile, issueBody);
     fs.writeFileSync(path.join(destDir, 'issue-body.md'), issueBody);
 
-    let issueUrl = '';
-    let ghError = '';
-    try {
-      issueUrl = execSync(
-        `scripts/gh-file-issue.sh --title "${issueTitle.replace(/"/g, '\\"')}" --label bug --body-file "${bodyFile}"`,
-        { cwd: REPO, encoding: 'utf8', timeout: 30000 }
-      ).trim();
-    } catch (e) {
-      ghError = e.stderr || e.message || 'Unknown error filing issue';
-    }
+    const { issueUrl, ghError } = fileIssue(issueTitle, bodyFile);
 
     if (issueUrl) {
       fs.writeFileSync(path.join(destDir, 'issue-url.txt'), issueUrl);
@@ -1197,7 +1203,11 @@ const server = http.createServer((req, res) => {
   }
 });
 
-server.listen(PORT, '0.0.0.0', () => {
-  console.log(`Review server: http://localhost:${PORT}`);
-  console.log(`Serving artifacts from: ${REPO}`);
-});
+if (require.main === module) {
+  server.listen(PORT, '0.0.0.0', () => {
+    console.log(`Review server: http://localhost:${PORT}`);
+    console.log(`Serving artifacts from: ${REPO}`);
+  });
+}
+
+module.exports = { resolvePort, fileIssue };
