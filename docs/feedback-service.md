@@ -100,7 +100,8 @@ mobissh-prod server/index.js
   service, so semantics cannot drift.
 - `server-feedback/index.js` — the dedicated service. Plain `node:http`, zero
   dependencies. Routes above + `GET /healthz`. Retention knob
-  `FEEDBACK_RETENTION_DAYS` (default 0 = keep everything; sweep on boot + daily).
+  `FEEDBACK_RETENTION_DAYS` (default 90 days; `0` keeps everything; the sweep
+  runs on boot and then daily, #1290).
 - `docker/feedback/Dockerfile` — build context is the repo root (shares
   feedback-store.js). `docker-compose.feedback.yml` joins the external
   `mobissh` network (Docker DNS; no port mapping — docker-proxy is absent).
@@ -114,9 +115,11 @@ mobissh-prod server/index.js
 - Security: nothing is exposed beyond the tailnet. The service listens only on
   the internal `mobissh` bridge network; the app still talks to the single
   Tailscale endpoint. Every upload must carry the shared `X-MobiSSH-Key`
-  header and is rate limited per IP (`server/feedback-guard.js`, #1115). Only
-  the in-app feedback overlay sends the key today; the crash reporter, the
-  install-page form and the termux uploader do not, so they are rejected (#1243).
+  header and is rate limited per IP (`server/feedback-guard.js`, #1115). The
+  in-app feedback overlay and the crash reporter
+  (`native/lib/diagnostics/crash_reporter.dart`, when a key is configured)
+  send the key; the install-page form does not and is rejected (#1243); the
+  termux uploader sends it from `MOBISSH_FEEDBACK_KEY`.
 
 ### Tests
 
@@ -148,8 +151,8 @@ compose default uses `${FEEDBACK_SERVICE_URL-…}`, no colon, so an empty value
 disables). Fallback also engages automatically whenever the service is down —
 `scripts/feedback-ctl.sh stop` alone never loses reports.
 
-Retention: default keeps everything. To enable pruning, recreate the service
-with e.g. `FEEDBACK_RETENTION_DAYS=90`.
+Retention: the default prunes files older than 90 days, on boot and daily. To
+keep everything, recreate the service with `FEEDBACK_RETENTION_DAYS=0`.
 
 ## 4. Operator handoff — PVE LXC deploy (raserver-home-it)
 
@@ -183,7 +186,7 @@ data directory:
   the LXC to the bridge and set `FEEDBACK_SERVICE_URL=http://<lxc-ip-or-name>:8082`
   on mobissh-prod (compose env). The service needs NO inbound exposure beyond
   that one consumer — do not publish it on the tailnet or LAN-wide.
-- Env: `PORT=8082`, `UPLOADS_DIR=<mounted dir>`, `FEEDBACK_RETENTION_DAYS=0`.
+- Env: `PORT=8082`, `UPLOADS_DIR=<mounted dir>`, `FEEDBACK_RETENTION_DAYS` (unset = 90, `0` = keep everything).
 - Health: `GET http://<service>:8082/healthz` → `{ok:true,service:"mobissh-feedback",...}`.
   `scripts/feedback-ctl.sh status` covers the Docker shape; for a bare-node LXC
   use the healthz URL directly.
