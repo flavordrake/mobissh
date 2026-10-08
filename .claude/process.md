@@ -92,7 +92,7 @@ face additional scrutiny.
 
 ### Bot delegation lifecycle
 
-Bot work is done by LOCAL develop agents (`/develop N`, `.claude/agents/develop.md`),
+Bot work is done by LOCAL develop agents (`/develop N`, the devloop `develop` agent),
 each in its own git worktree, on a `bot/issue-{N}` branch managed by
 `scripts/bot-branch.sh {create|commit|pr|ship} N`. The `@claude` GitHub Action
 (`.github/workflows/claude.yml`) still exists but is not part of this lifecycle.
@@ -143,7 +143,7 @@ changed need updating. Tests that fail intermittently need investigation.
 
 ### Test-driven development (TDD) requirement
 
-All bot development follows a TDD workflow (see `.claude/agents/develop.md` for full spec):
+All bot development follows a TDD workflow (full spec: the devloop `develop` agent):
 
 1. **Analyze first** — classify the issue (bug/feature/refactor), assess TDD viability
 2. **Write tests before code** — smoketests (feature accessible) + behavior tests (feature works).
@@ -172,7 +172,8 @@ Every develop brief must include:
 6. **Test expectations** -- what tests should be written (smoketest, regression, behavior)
 7. **Verify** -- exact command sequence: `scripts/native-fast-gate.sh`
 
-The agent's instruction set is this brief plus `.claude/agents/develop.md`. It has no
+The agent's instruction set is this brief plus the devloop `develop` agent and the
+project rules (`AGENTS.md`, `.claude/rules/`). It has no
 memory of prior attempts beyond what the brief and `memory/bot-attempts.md` give it.
 
 ### Context freshness in delegation

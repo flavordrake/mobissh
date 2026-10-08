@@ -101,3 +101,23 @@ The native app is the product; this is its gate.
 - **Prefer a headless transition test.** See the native contract above for which
   behaviours genuinely need a device.
 - **Screenshots ARE the test.** Read them; assert visibility alongside data.
+- **Where tests go:** logic and widgets in `native/test/**/*_test.dart`; device
+  behaviour in `native/integration_test/*_test.dart` (declares its fixtures, plus a
+  manifest line); non-Flutter infrastructure in `test/infra/*.test.js` (node:test).
+- **Widget test fails, then a debug print shows it settled:** Futures backed by the task
+  gateway or SharedPreferences escape `testWidgets`' fake clock and `pump()` never drains
+  them. Tick `tester.runAsync` first, and poll with a bounded timeout instead of a fixed
+  delay (fixed delays are load-sensitive flakes).
+- **Attributing an integration failure needs a baseline on main.** Re-run only the
+  failing tests on the same lease instead of the whole suite:
+  `scripts/with-fleet-emulator.sh -- scripts/integration-subset.sh integration_test/<name>_test.dart ...`
+
+## TRACE telemetry (native)
+Capture, don't analyze; deltas surface at harvest:
+
+| File | What | Source |
+|------|------|--------|
+| `telemetry/perf-before.txt`, `perf-after.txt` | test suite duration (always) | the `flutter test` duration line of the fast gate |
+| `telemetry/apk-size.txt` | shipped artifact size (build changes) | the stamped APK in `public/` |
+| `telemetry/paint-stats.txt` | frame/damage accounting (terminal view, gestures, detection) | `native/lib/diagnostics/paint_stats.dart`, `scripts/paint-replay.sh` |
+| `telemetry/byte-trace.log` | chunk timing, throughput (connect/SFTP) | byteTrace in the bug-report bundle |
