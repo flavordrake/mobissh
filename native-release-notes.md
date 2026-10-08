@@ -6,6 +6,11 @@ verify". Each bullet: ONE short line, what changed — NOT how to test it. Keep
 internal/test/CI/refactor work OUT. **Update this every release** (gen-apk-install-page.sh
 warns when native/lib has commits newer than this file).
 
+## v0.1.13-dev+202 (2026-10-08): link safety, a cleaner profiles row, kept compose text
+- **Text you type while disconnected is kept, not lost.** The compose bar holds it with a "Not connected — text kept, not sent" line until a send goes through. Paste now adds bracket markers only when the remote asked for them, so a multi-line paste no longer runs line by line or shows stray `[200~` text. (#1229) **Device-test:** paste two lines into a plain shell.
+- **One row of profile actions.** New connection is a `+` button; Import, Export and ssh config fit beside it on one line. (#1284)
+- **Links are safer.** A link that carries a password, key or command is refused; a burst of links shows one confirm, not a stack; a link that opens the profile editor shows a banner saying the host came from a link; a jump-host failure stays on screen instead of vanishing. (#1279) **Device-test:** open a `mobissh://connect` link twice quickly.
+
 ## v0.1.13-dev+201 (2026-10-04): privacy and security fixes
 - **Bug reports no longer include your hosts or usernames.** The settings snapshot carried the file browser's per-host sort order; it is gone, and a test now checks the values sent, not just their names.
 - **Saved bug reports stay on this phone.** Reports waiting to send are kept out of cloud backup and device-to-device transfer, and are deleted after 30 days if they never go out.
