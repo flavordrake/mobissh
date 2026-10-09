@@ -16,10 +16,10 @@ void main() {
       const sig = AttentionSignal(AttentionKind.osc9, 'Claude — main (win 3)');
       final n = AttentionNotification.build(sessionId: 'sess-A', signal: sig);
 
-      expect(n.title, kAttentionTitle);
+      // The host leads the TITLE so stacked alerts differ without expanding.
+      expect(n.title, 'sess-A — $kAttentionTitle');
       // (win N) is stripped from the visible body and structured into payload.
-      // #847: body leads with the host label (differentiate by server).
-      expect(n.body, 'sess-A — Claude — main');
+      expect(n.body, 'Claude — main');
       expect(n.tag, 'mobissh.attention.sess-A');
       expect(n.sourceWindow, 3);
 
@@ -61,7 +61,7 @@ void main() {
       expect(payload['sessionId'], 'fd-dev:2222:user:222');
     });
 
-    test('text-less bare bell body is the host label (differentiate by server), '
+    test('text-less bare bell names the host in the title, empty body, '
         'no sourceWindow', () {
       const sig = AttentionSignal(AttentionKind.bell, null);
       final n = AttentionNotification.build(
@@ -69,15 +69,16 @@ void main() {
         signal: sig,
       );
       // #847: even a context-less bell names the server (short host label).
-      expect(n.body, 'fd-dev');
+      expect(n.title, 'fd-dev — $kAttentionTitle');
+      expect(n.body, '');
       expect(n.sourceWindow, isNull);
       final payload = jsonDecode(n.payload) as Map;
       expect(payload.containsKey('sourceWindow'), isFalse);
     });
 
-    test('body differentiates by server: distinct hosts → distinct bodies (#847)',
-        () {
-      const sig = AttentionSignal(AttentionKind.bell, null);
+    test('title STARTS with the host, so two servers differ in the collapsed '
+        'view where Android truncates the title (#847)', () {
+      const sig = AttentionSignal(AttentionKind.osc9, 'same text');
       final a = AttentionNotification.build(
         sessionId: 'fd-dev.tailbe5094.ts.net:22:u:1',
         signal: sig,
@@ -86,19 +87,20 @@ void main() {
         sessionId: 'nv-dev.tailbe5094.ts.net:22:u:2',
         signal: sig,
       );
-      expect(a.body, 'fd-dev');
-      expect(b.body, 'nv-dev');
-      expect(a.body, isNot(b.body),
-          reason: 'two servers must never show identical notification text');
+      expect(a.title, startsWith('fd-dev'));
+      expect(b.title, startsWith('nv-dev'));
+      // The distinguishing part must survive a short truncation.
+      expect(a.title.substring(0, 6), isNot(b.title.substring(0, 6)));
     });
 
-    test('osc777 title:body text is carried as the body, host-prefixed', () {
+    test('osc777 title:body text is carried as the body', () {
       const sig = AttentionSignal(AttentionKind.osc777, 'MobiSSH: build done');
       final n = AttentionNotification.build(
         sessionId: 'fd-dev.tailbe5094.ts.net:22:u:1',
         signal: sig,
       );
-      expect(n.body, 'fd-dev — MobiSSH: build done');
+      expect(n.title, 'fd-dev — $kAttentionTitle');
+      expect(n.body, 'MobiSSH: build done');
     });
 
     test('PAYLOAD CARRIES NO SECRET MATERIAL', () {
@@ -148,8 +150,8 @@ void main() {
       expect(n.url, 'https://example.com/app.apk');
       final payload = jsonDecode(n.payload) as Map;
       expect(payload['url'], 'https://example.com/app.apk');
-      // The URL stays visible in the body (host-prefixed, unchanged).
-      expect(n.body, 'sess-A — Build ready: https://example.com/app.apk');
+      // The URL stays visible in the body, unchanged.
+      expect(n.body, 'Build ready: https://example.com/app.apk');
     });
 
     test('http and https both match; first wins', () {
@@ -184,7 +186,7 @@ void main() {
       expect(n.url, 'https://example.com/x');
       expect(n.sourceWindow, 3);
       // (win 3) stripped from body; URL retained.
-      expect(n.body, 'fd-dev — ready https://example.com/x');
+      expect(n.body, 'ready https://example.com/x');
       final payload = jsonDecode(n.payload) as Map;
       expect(payload['url'], 'https://example.com/x');
       expect(payload['sourceWindow'], 3);

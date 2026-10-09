@@ -33,17 +33,19 @@
 //      `sessionsProvider.notifier.setActive(sessionId)`.
 //
 // SECURITY: a notification only ever carries the opaque sessionId, an optional
-// integer source-window, and a FIXED human phrase. It never carries a password,
-// passphrase, key, host, or username — see `session_attention_notification_test`.
+// integer source-window, the short host label (#847) and a fixed phrase. It
+// never carries a password, passphrase, key, or username — see
+// `session_attention_notification_test`.
 
 import 'dart:convert';
 
 import 'attention_signal_scanner.dart';
 
-/// Fixed, human-readable notification title. Intentionally generic + carries no
-/// session-identifying material (the session is identified by the opaque tag /
-/// payload, not the visible text).
-const String kAttentionTitle = 'MobiSSH — Claude needs attention';
+/// Fixed phrase that follows the host label in the notification title
+/// (`"fd-dev — Claude needs attention"`). The host leads so stacked alerts from
+/// different servers differ in the collapsed view, where Android truncates the
+/// title; the short host label is already visible text since #847.
+const String kAttentionTitle = 'Claude needs attention';
 
 /// Tag prefix so an attention notification never collides with the
 /// foreground-service keep-alive notification (channel `mobissh_keepalive`).
@@ -140,15 +142,14 @@ class AttentionNotification {
     this.url,
   });
 
-  /// Notification title — the fixed [kAttentionTitle]. The session is NOT named
-  /// in the title (no host/user leakage in the visible text).
+  /// Notification title — `"<host label> — [kAttentionTitle]"`. The host leads
+  /// so alerts from different servers are told apart without expanding.
   final String title;
 
-  /// Notification body — leads with the short host label (#847: differentiate by
-  /// server) followed by the scanner's parsed text (the OSC-9 / OSC-777 /
-  /// hook-line message): `"server — text"`. A text-less signal (a bare BEL) is
-  /// just `"server"`. Stripped of any trailing `(win N)` hint, which is
-  /// structured into [sourceWindow]/[payload] instead.
+  /// Notification body — the scanner's parsed text (the OSC-9 / OSC-777 /
+  /// hook-line message), or empty for a text-less signal (a bare BEL). Stripped
+  /// of any trailing `(win N)` hint, which is structured into
+  /// [sourceWindow]/[payload] instead.
   final String body;
 
   /// Android notification tag. Keyed by HOST (#847) so a later signal from the
@@ -195,13 +196,11 @@ class AttentionNotification {
     // never interferes. The URL stays visible in the body — we only ADD a tap
     // action, we do not hide or rewrite the text.
     final url = parseUrl(raw);
-    // #847: lead the body with the short host label so alerts are differentiated
-    // BY SERVER (owner: "at minimum differentiate by server"). A bare bell (no
-    // text) shows just the server; a signal with text shows "server — text".
+    // #847: the short host label LEADS THE TITLE so alerts are told apart by
+    // server in the collapsed view (owner, 2026-10-09: "the host should be the
+    // first thing in the description and not require expanding").
     final label = hostLabelOfSessionId(sessionId);
-    final body = (stripped == null || stripped.isEmpty)
-        ? label
-        : '$label — $stripped';
+    final body = stripped ?? '';
     final payloadMap = <String, dynamic>{'sessionId': sessionId};
     if (win != null) payloadMap['sourceWindow'] = win;
     // #710: carry the extracted URL so the tap handler can launch it. This is the
@@ -209,7 +208,7 @@ class AttentionNotification {
     // signal text — never from credential material (see the no-secret test).
     if (url != null) payloadMap['url'] = url;
     return AttentionNotification(
-      title: kAttentionTitle,
+      title: '$label — $kAttentionTitle',
       body: body,
       // Per-HOST tag (#847): two sessions to the same host collapse to one
       // notification slot (replace, not stack). The tap payload still carries
