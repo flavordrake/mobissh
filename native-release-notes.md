@@ -6,6 +6,9 @@ verify". Each bullet: ONE short line, what changed — NOT how to test it. Keep
 internal/test/CI/refactor work OUT. **Update this every release** (gen-apk-install-page.sh
 warns when native/lib has commits newer than this file).
 
+## v0.1.13-dev+203 (2026-10-09): attention alerts name the host first
+- **Attention notifications start with the host.** "nv-dev — Claude needs attention" instead of a title that cut off before the host, so stacked alerts from different machines are told apart without expanding. **Device-test:** trigger an alert from two hosts.
+
 ## v0.1.13-dev+202 (2026-10-08): link safety, a cleaner profiles row, kept compose text
 - **Text you type while disconnected is kept, not lost.** The compose bar holds it with a "Not connected — text kept, not sent" line until a send goes through. Paste now adds bracket markers only when the remote asked for them, so a multi-line paste no longer runs line by line or shows stray `[200~` text. (#1229) **Device-test:** paste two lines into a plain shell.
 - **One row of profile actions.** New connection is a `+` button; Import, Export and ssh config fit beside it on one line. (#1284)
