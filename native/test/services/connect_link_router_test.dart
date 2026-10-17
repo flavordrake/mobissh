@@ -194,7 +194,7 @@ void main() {
 
   group('A6 rejection touches nothing (R26/R27)', () {
     for (final link in [
-      'ssh://box.example',
+      'telnet://box.example', // ssh:// is claimed since S4
       'mobissh://open?host=box.example',
       'mobissh://connect?name=nobody',
       'mobissh://connect?host=box.example&claude=00000000-0000-0000-0000-000000000000',
@@ -541,6 +541,65 @@ void main() {
       expect(spy.log.where((l) => l.contains('dropped reason=busy')), hasLength(1));
       editor.complete();
       await first;
+    });
+  });
+
+  // #1279 S4 (D1): `ssh://` is the connect verb by another spelling, so the
+  // router treats it exactly like the equivalent mobissh://connect link.
+  group('S4 ssh:// routes like mobissh://connect', () {
+    test('a saved profile: same confirm and same connect', () async {
+      await router.deliver('ssh://alice@box.example');
+      final viaSsh = (
+        spy.confirmed.map((p) => p.identityKey).toList(),
+        spy.connected.map((p) => p.identityKey).toList(),
+        spy.connectedVerbs,
+      );
+      spy = _Spy()..profiles = [_alice, _bob];
+      router = spy.build(PendingLinkBridge(MapKeyValueStore()));
+      await router
+          .deliver('mobissh://connect?host=box.example&user=alice&port=22');
+      final viaMobissh = (
+        spy.confirmed.map((p) => p.identityKey).toList(),
+        spy.connected.map((p) => p.identityKey).toList(),
+        spy.connectedVerbs,
+      );
+      expect(viaSsh.toString(), viaMobissh.toString());
+      expect(viaSsh.$2, [_alice.identityKey]);
+      expect(viaSsh.$3, [null]);
+    });
+
+    test('D3: "always allow links" skips the prompt for an ssh:// link',
+        () async {
+      spy.profiles = [_alice.copyWith(linkAutoConnect: true), _bob];
+      spy.confirmAnswer = null; // would cancel if asked
+      await router.deliver('ssh://alice@box.example');
+      expect(spy.confirmed, isEmpty);
+      expect(spy.connected.single.identityKey, _alice.identityKey);
+    });
+
+    test('a ;fingerprint= and a path change nothing about the match', () async {
+      await router.deliver(
+          'ssh://alice;fingerprint=ssh-ed25519-ab@box.example/some/path');
+      expect(spy.connected.single.identityKey, _alice.identityKey);
+      expect(spy.rejections, 0);
+    });
+
+    test('D6: an unknown host opens the editor, never connects', () async {
+      await router.deliver('ssh://carol@new.example:2200');
+      expect(spy.connected, isEmpty);
+      expect(spy.created.single.host, 'new.example');
+      expect(spy.created.single.port, 2200);
+      expect(spy.created.single.username, 'carol');
+      expect(spy.created.single.linkAutoConnect, isFalse);
+    });
+
+    test('D2: a password rejects the link and touches nothing', () async {
+      spy.profiles = [_alice.copyWith(linkAutoConnect: true)];
+      await router.deliver('ssh://alice:hunter2@box.example');
+      expect(spy.rejections, 1);
+      expect(spy.connected, isEmpty);
+      expect(spy.created, isEmpty);
+      expect(spy.log.join('\n'), isNot(contains('hunter2')));
     });
   });
 
