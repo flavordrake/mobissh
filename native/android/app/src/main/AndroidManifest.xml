@@ -84,6 +84,15 @@
                 <category android:name="android.intent.category.BROWSABLE"/>
                 <data android:scheme="mobissh"/>
             </intent-filter>
+            <!-- #1279 S4 (D1): ssh:// links (MobiHarness, other apps) so MobiSSH
+                 is offered in the "Open with" chooser. Same rules as sftp://;
+                 app_links delivers every scheme this activity is started with. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="ssh"/>
+            </intent-filter>
         </activity>
         <!-- flutter_foreground_task service + receiver. WITHOUT this <service>
              element, FlutterForegroundTask.startService() fails with

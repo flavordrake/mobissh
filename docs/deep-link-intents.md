@@ -102,7 +102,7 @@ Owner decision recorded 2026-08-21 as pending: destination-based trust as above 
 
 ## 9. Platform mechanics
 
-- R28 Android: `intent-filter` with `VIEW`, `DEFAULT`, `BROWSABLE` and `<data android:scheme="mobissh"/>` on `.MainActivity` (`native/android/app/src/main/AndroidManifest.xml`). Delivery through the `app_links` package (cold + warm) or a `mobissh/links` MethodChannel from `onNewIntent`/`getIntent`; the package is preferred unless it drags a dependency the gate rejects.
+- R28 Android: `intent-filter` with `VIEW`, `DEFAULT`, `BROWSABLE` and `<data android:scheme="mobissh"/>` on `.MainActivity` (and a second, identical filter for `ssh`, §16) (`native/android/app/src/main/AndroidManifest.xml`). Delivery through the `app_links` package (cold + warm) or a `mobissh/links` MethodChannel from `onNewIntent`/`getIntent`; the package is preferred unless it drags a dependency the gate rejects.
 - R29 macOS: `CFBundleURLTypes` for `mobissh` in `Info.plist`; works unsigned. iOS: same key, lands when the signing gate lifts.
 - R30 A caller on Android 11+ needs a `<queries>` entry for the scheme only to resolve the handler first (`canLaunchUrl`, `resolveActivity`); a plain launch (`startActivity`, `launchUrl` with `LaunchMode.externalApplication`) does not need one. §11 says so. mobissh itself needs no `<queries>` change.
 
@@ -120,6 +120,7 @@ Published with the feature so opsurface and others build to the same rules:
 - Fire one link per user action. A link that arrives while mobissh is still handling another is dropped (R14b), and the confirm buttons ignore taps for the first 400 ms.
 - Expect no result. Expect the first tap per profile to confirm. A `connect` naming a host the user has not saved opens mobissh's create form pre-filled from the link (R9/R14) — the user still confirms; nothing connects on its own. A `connect?name=` with an unknown alias shows `Link not recognized`; fall back to the host form in that case.
 - `tmux=` names match `^[A-Za-z0-9_][A-Za-z0-9_-]{0,31}$` (no leading hyphen). `window=` (#1211) uses the same shape, needs `tmux=`, and names the window exactly (no prefix match); a missing window is a notice, never a new window. `claude=` is reserved and rejects the whole link until it ships.
+- To open a terminal on a host from any app, an `ssh://[user@]host[:port]` link works too (§16): MobiSSH is offered in the "Open with" chooser. The same confirm, destination-trust and rejection rules apply.
 - Do not put a command or a credential in the link, and put a path only on `sftp` (§15). Such a link is rejected as a whole, never connected with the parameter dropped (R7a).
 
 ## 12. Acceptance
@@ -177,3 +178,19 @@ Parsing is hand-rolled like §3 (`native/lib/services/sftp_intent.dart`, `parseL
 - `/~` and `/~/rest` are home-relative (`~`, `~/rest`); `/~user` rejects. Absent path means the profile's default directory.
 - `;` in the path is a literal character, and `;type=` is not interpreted (D5), so #994's "Copy sftp:// URL" output round-trips. That helper now escapes a literal `%` in a file name, so the URL names the file it was copied from.
 - On `mobissh://sftp`, `path` is decoded once with the other parameters and must start with `/` or `~`. `tmux`/`window` on `sftp` reject (`badParam`), as `path` does on `connect`/`create` (R7a). `name=` resolves through the alias as on `connect`.
+
+## 16. `ssh://` links (#1279 S4, decision D1)
+
+MobiSSH claims the `ssh` scheme so it appears in Android's "Open with" chooser beside other SSH clients (the report: MobiHarness's "Open SSH" showed ConnectBot and Termius but not MobiSSH). An `ssh://` link is the `connect` verb under the same rules as `sftp://` (§15); there is no new verb and no new trust.
+
+```
+ssh://[user[;c-param*(,c-param)]@]host[:port][/ignored]
+```
+
+- Parsed by `parseSshUri` (`native/lib/services/sftp_intent.dart`, dispatched from `parseLink`) into a `ConnectRequest` with `verb: connect`, the same request `mobissh://connect?host=<h>&port=<n>&user=<u>` produces. Profile match is host + port + user (R8), so the router, confirm (R12), per-profile "always allow links" (D3), initial command and port forwards (D4), and the unknown-host editor with its persistent "this host came from a link" banner (D6) are unchanged.
+- D2: a `:` in the userinfo (a password, even empty, or an encoded `%3A`) rejects the whole link (`credentialInLink`). D5: `;fingerprint=` is shape-checked and ignored; the stored host key still fails closed.
+- A path is ignored, not an error, and is never decoded or carried. A query or fragment rejects (`malformed`), so a `?cmd=` cannot ride along. Host per R3 (a leading `-` rejects, so a link cannot become an ssh option), port per R4, user per R4; control characters, whitespace around the link and links over 8192 characters reject as in §15.
+- `tmux`, `window`, `name` and `claude` have no `ssh://` spelling; use `mobissh://connect` for them.
+- Android: `native/android/app/src/main/AndroidManifest.xml` carries a `VIEW` + `DEFAULT` + `BROWSABLE` filter for `<data android:scheme="ssh"/>` on `.MainActivity`; `flutter_deeplinking_enabled` stays `false` and `app_links` delivers it (it does not filter by scheme). `native/test/platform/android_manifest_deep_link_test.dart` pins both filters.
+- Caller contract: fire `ssh://user@host[:port]` as an `ACTION_VIEW` with `FLAG_ACTIVITY_NEW_TASK`. If other SSH clients are installed, Android shows the chooser (or the user's saved default). Expect no result; the first tap per profile confirms.
+- Device validation owed unless a run is recorded on #1279: `adb shell am start -a android.intent.action.VIEW -d 'ssh://testuser@127.0.0.1:2222'` and `adb shell cmd package query-activities -a android.intent.action.VIEW -d ssh://x`.

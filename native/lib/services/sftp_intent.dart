@@ -28,6 +28,7 @@ const int maxLinkSegmentBytes = 255;
 const int maxLinkSegments = 64;
 
 const _scheme = 'sftp://';
+const _sshScheme = 'ssh://';
 const _malformed = ConnectIntentRejected(ConnectIntentReason.malformed);
 const _badPath = ConnectIntentRejected(ConnectIntentReason.badPath);
 const _credential =
@@ -39,25 +40,38 @@ final _fingerprintShape = RegExp(r'^[A-Za-z0-9-]{1,256}$');
 ConnectIntentRejected _bad(String key) =>
     ConnectIntentRejected(ConnectIntentReason.badParam, key: key);
 
-/// Every inbound link goes through here: `sftp://` (any case, RFC 3986) to
-/// [parseSftpUri], everything else to [parseConnectIntent] (R1 unchanged).
+/// Every inbound link goes through here: `sftp://` and `ssh://` (any case,
+/// RFC 3986) to [parseSftpUri] / [parseSshUri], everything else to
+/// [parseConnectIntent] (R1 unchanged).
 ConnectIntentResult parseLink(String link) {
   if (link.length > maxLinkLength) {
     return const ConnectIntentRejected(ConnectIntentReason.tooLong);
   }
-  if (link.toLowerCase().startsWith(_scheme)) return parseSftpUri(link);
+  final lower = link.toLowerCase();
+  if (lower.startsWith(_scheme)) return parseSftpUri(link);
+  if (lower.startsWith(_sshScheme)) return parseSshUri(link);
   return parseConnectIntent(link);
 }
 
 /// Parse an `sftp://` link per F1/F2/F6. Never throws.
-ConnectIntentResult parseSftpUri(String link) {
+ConnectIntentResult parseSftpUri(String link) =>
+    _parseUri(link, _scheme, ConnectVerb.sftp);
+
+/// #1279 S4 (D1): `ssh://[user[;fingerprint=…]@]host[:port]` is the `connect`
+/// verb under the same F1/F2/F6 rules as [parseSftpUri]. A path is ignored,
+/// not an error: ssh clients commonly send one, and nothing in it is read.
+/// Never throws.
+ConnectIntentResult parseSshUri(String link) =>
+    _parseUri(link, _sshScheme, ConnectVerb.connect);
+
+ConnectIntentResult _parseUri(String link, String scheme, ConnectVerb verb) {
   if (link.length > maxLinkLength) {
     return const ConnectIntentRejected(ConnectIntentReason.tooLong);
   }
   if (link.trim() != link || hasLinkControlChar(link)) return _malformed;
-  if (!link.toLowerCase().startsWith(_scheme)) return _malformed;
+  if (!link.toLowerCase().startsWith(scheme)) return _malformed;
 
-  final rest = link.substring(_scheme.length);
+  final rest = link.substring(scheme.length);
   if (rest.contains('?') || rest.contains('#')) return _malformed;
   final slash = rest.indexOf('/');
   final authority = slash < 0 ? rest : rest.substring(0, slash);
@@ -103,13 +117,13 @@ ConnectIntentResult parseSftpUri(String link) {
   }
 
   String? path;
-  if (rawPath != null) {
+  if (rawPath != null && verb == ConnectVerb.sftp) {
     path = _sftpPath(rawPath);
     if (path == null) return _badPath;
   }
 
   return ConnectIntentParsed(ConnectRequest(
-    verb: ConnectVerb.sftp,
+    verb: verb,
     host: host,
     port: port,
     user: user,

@@ -25,6 +25,22 @@ void main() {
       contains('android:scheme="mobissh"'),
       reason: 'mobissh VIEW intent filter missing (#1141)',
     );
+    // #1279 S4 (D1): MobiSSH claims ssh:// so it is offered in the "Open with"
+    // chooser. One filter, with VIEW + DEFAULT + BROWSABLE, on this activity.
+    final sshFilter = RegExp(
+      r'<intent-filter>(?:(?!</intent-filter>)[\s\S])*android:scheme="ssh"(?:(?!</intent-filter>)[\s\S])*</intent-filter>',
+    ).firstMatch(body);
+    expect(sshFilter, isNotNull, reason: 'ssh VIEW intent filter missing (#1279)');
+    final filter = sshFilter!.group(0)!;
+    for (final needed in [
+      'android.intent.action.VIEW',
+      'android.intent.category.DEFAULT',
+      'android.intent.category.BROWSABLE',
+    ]) {
+      expect(filter, contains(needed), reason: 'ssh filter lacks $needed');
+    }
+    expect(filter, isNot(contains('android:host')),
+        reason: 'ssh filter must not pin a host');
     final metaData = RegExp(
       r'<meta-data\b[^>]*android:name="flutter_deeplinking_enabled"[^>]*android:value="false"',
     );

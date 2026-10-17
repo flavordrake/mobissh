@@ -322,7 +322,7 @@ void main() {
       rejects('sftp://h/a\u007f', ConnectIntentReason.malformed);
     });
     test('other schemes', () {
-      rejects('ssh://h/', ConnectIntentReason.malformed);
+      rejects('telnet://h/', ConnectIntentReason.malformed); // ssh:// is claimed since S4
       rejects('sftp:/h', ConnectIntentReason.malformed);
       rejects('file:///etc', ConnectIntentReason.malformed);
       rejects('', ConnectIntentReason.malformed);
