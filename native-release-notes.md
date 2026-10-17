@@ -6,6 +6,9 @@ verify". Each bullet: ONE short line, what changed — NOT how to test it. Keep
 internal/test/CI/refactor work OUT. **Update this every release** (gen-apk-install-page.sh
 warns when native/lib has commits newer than this file).
 
+## v0.1.13-dev+204 (2026-10-17): MobiSSH opens ssh:// links
+- **MobiSSH now appears in "Open with" for `ssh://` links**, alongside ConnectBot and Termius. A link to a saved host connects with that profile; an unsaved host opens the profile editor with a "came from a link" banner; a link carrying a password is refused. (#1279) **Device-test:** tap Open SSH in MobiHarness and pick MobiSSH.
+
 ## v0.1.13-dev+203 (2026-10-09): attention alerts name the host first
 - **Attention notifications start with the host.** "nv-dev — Claude needs attention" instead of a title that cut off before the host, so stacked alerts from different machines are told apart without expanding. **Device-test:** trigger an alert from two hosts.
 
