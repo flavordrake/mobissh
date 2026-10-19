@@ -177,6 +177,55 @@ void main() {
     expect(find.text('Bare'), findsWidgets);
   });
 
+  // Hand off a credential-less profile, then complete the missing-credentials
+  // editor with "Save & connect"; returns the session entry id.
+  Future<String> saveAndConnectFromEditor(
+      WidgetTester tester, ProviderContainer container,
+      {LinkVerbCommand? verb}) async {
+    container.read(pendingLinkConnectProvider.notifier).state =
+        PendingLinkConnect(
+      SavedProfile(
+        title: 'Bare',
+        host: 'bare.example',
+        port: 22,
+        username: 'nobody',
+        authType: 'password',
+        initialCommand: 'htop',
+      ),
+      verb: verb,
+    );
+    await _pumpFrames(tester, count: 30);
+    expect(find.byKey(const Key('profile-editor')), findsOneWidget);
+    await tester.enterText(
+        find.byKey(const Key('profile-editor-password')), 'pw');
+    await _pumpFrames(tester);
+    final submit = find.byKey(const Key('connect-submit'));
+    await tester.ensureVisible(submit);
+    await _pumpFrames(tester);
+    await tester.tap(submit);
+    await _pumpFrames(tester, count: 30);
+    final entry = container.read(sessionsProvider).entries.single;
+    await emitFromTask(tester,
+        SshStateEvent(sessionId: entry.id, state: SshSessionState.connected.name).toJson());
+    await emitFromTask(tester, SshShellReadyEvent(sessionId: entry.id).toJson());
+    return entry.id;
+  }
+
+  testWidgets('no stored creds: the editor Save & connect keeps the link verb '
+      '(R12/R25), not the profile initialCommand', (tester) async {
+    final container = await pumpChooser(tester);
+    await saveAndConnectFromEditor(tester, container,
+        verb: TmuxAttach('main'));
+    expect(sentInputs, ['tmux new-session -A -s main\n']);
+  });
+
+  testWidgets('no stored creds, no verb: Save & connect runs initialCommand',
+      (tester) async {
+    final container = await pumpChooser(tester);
+    await saveAndConnectFromEditor(tester, container);
+    expect(sentInputs, ['htop\n']);
+  });
+
   testWidgets('rejected-link banner is persistent and dismissable',
       (tester) async {
     final container = await pumpChooser(tester);
