@@ -19,6 +19,7 @@ import '../main.dart' show ConnectHomePage;
 import '../services/attention_notifier_fln.dart';
 import '../services/connect_link_router.dart';
 import '../services/link_verb.dart';
+import '../services/tmux_link_select.dart' show TmuxLinkOutcome;
 import '../services/session_attention_notification.dart';
 import '../ssh/ssh_session.dart';
 import '../ssh/ssh_session_proxy.dart';
@@ -73,23 +74,50 @@ final linkIntentSourceProvider =
 final linkPendingStoreProvider =
     Provider<KeyValueStore>((_) => const FftKeyValueStore());
 
+/// Shows the one neutral notice a link target that tmux lacks gets (R22c).
+void _linkNotice(SshSessionProxy proxy, String message) {
+  ctrace('ui.link', 'window select: no match sid=${proxy.sessionId}');
+  final overlay = appNavigatorKey.currentState?.overlay;
+  if (overlay == null) return;
+  showTopToastInOverlay(overlay, message,
+      duration: const Duration(seconds: 4));
+}
+
 /// #1211: select a link's tmux window on [proxy]'s session over its exec
 /// channel (never the PTY) and, when tmux has no such window, show ONE short
 /// neutral notice. Nothing is required of the user and nothing is created, so
-/// a toast (not a persistent banner) is the right weight.
-Future<bool> runLinkWindowSelect(SshSessionProxy proxy, TmuxAttach verb) {
-  return selectLinkWindow(
+/// a toast (not a persistent banner) is the right weight. #1242: a window id
+/// or a pane goes through the verified select instead; the shell is already
+/// attached to the session here (fresh connect or a link's attach).
+Future<bool> runLinkWindowSelect(SshSessionProxy proxy, TmuxAttach verb) async {
+  if (verb.isNamedWindowOnly) {
+    return selectLinkWindow(
+      verb,
+      run: (session, window) =>
+          proxy.tmuxSelectWindow(session: session, window: window),
+      notify: (message) => _linkNotice(proxy, message),
+    );
+  }
+  final outcome = await selectLinkTarget(
     verb,
-    run: (session, window) =>
-        proxy.tmuxSelectWindow(session: session, window: window),
-    notify: (message) {
-      ctrace('ui.link', 'window select: no match sid=${proxy.sessionId}');
-      final overlay = appNavigatorKey.currentState?.overlay;
-      if (overlay == null) return;
-      showTopToastInOverlay(overlay, message,
-          duration: const Duration(seconds: 4));
-    },
+    run: (v) => proxy.tmuxLinkSelect(
+        session: v.name, window: v.window, pane: v.pane, live: false),
+    notify: (message) => _linkNotice(proxy, message),
   );
+  return outcome == TmuxLinkOutcome.selected;
+}
+
+/// #1242: the live-session select: find OUR tmux client and switch it. True =
+/// handled (selected, or the neutral notice was shown); false = AMBIGUOUS, the
+/// caller keeps today's R23 path.
+Future<bool> runLinkClientSelect(SshSessionProxy proxy, TmuxAttach verb) async {
+  final outcome = await selectLinkTarget(
+    verb,
+    run: (v) => proxy.tmuxLinkSelect(
+        session: v.name, window: v.window, pane: v.pane, live: true),
+    notify: (message) => _linkNotice(proxy, message),
+  );
+  return outcome != TmuxLinkOutcome.ambiguous;
 }
 
 final connectLinkRouterProvider = Provider<ConnectLinkRouter>((ref) {
@@ -156,6 +184,14 @@ final connectLinkRouterProvider = Provider<ConnectLinkRouter>((ref) {
         return;
       }
       ctrace('ui.link', 'selectWindow: session gone sid=$sessionId');
+    },
+    selectViaClient: (sessionId, verb) async {
+      for (final e in ref.read(sessionsProvider).entries) {
+        if (e.id != sessionId) continue;
+        return runLinkClientSelect(e.proxy, verb);
+      }
+      ctrace('ui.link', 'selectViaClient: session gone sid=$sessionId');
+      return false;
     },
     pick: (candidates) async {
       final ctx = appNavigatorKey.currentContext;

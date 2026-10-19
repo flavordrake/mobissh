@@ -30,6 +30,7 @@ class ConnectRequest {
     this.name,
     this.tmux,
     this.window,
+    this.pane,
     this.path,
   });
 
@@ -45,8 +46,11 @@ class ConnectRequest {
   final String? tmux;
 
   /// #1211: the tmux window to select after the attach. Same shape as [tmux]
-  /// (R6); only valid alongside it.
+  /// (R6) or a window id `@N` (#1242, R6a); only valid alongside it.
   final String? window;
+
+  /// #1242: the tmux pane id `%N` to select; only valid alongside [tmux].
+  final String? pane;
 
   /// #1279: `sftp` only. Already passed [validateLinkPath]: absolute (`/…`)
   /// or home-relative (`~`, `~/…`). Null = the profile's default directory.
@@ -106,6 +110,15 @@ final linkUserShape = RegExp(r'^[A-Za-z0-9._-]{1,64}$');
 final _nameShape = RegExp(r'^[A-Za-z0-9_-]{1,32}$');
 /// R6 tmux name shape; shared with `link_verb.dart` (R22 re-check).
 final tmuxNameShape = RegExp(r'^[A-Za-z0-9_][A-Za-z0-9_-]{0,31}$');
+
+/// #1242 (R6a/R22d): tmux window and pane IDS. Ids carry no `:` or `.`, so
+/// like [tmuxNameShape] they cannot re-target another session.
+final tmuxWindowIdShape = RegExp(r'^@[0-9]{1,9}$');
+final tmuxPaneIdShape = RegExp(r'^%[0-9]{1,9}$');
+
+/// A `window=` value: an R6 name or an `@N` id.
+bool isTmuxWindowToken(String w) =>
+    tmuxNameShape.hasMatch(w) || tmuxWindowIdShape.hasMatch(w);
 
 /// Parse a `mobissh://` link per R1–R7. Never throws: any input that is not a
 /// well-formed link yields [ConnectIntentRejected].
@@ -212,7 +225,13 @@ ConnectIntentResult parseConnectIntent(String link) {
   // tmux) and the same allowlist — no `:`/`.` to re-target a session or pane.
   final window = params['window'];
   if (window != null) {
-    if (tmux == null || !tmuxNameShape.hasMatch(window)) return _bad('window');
+    if (tmux == null || !isTmuxWindowToken(window)) return _bad('window');
+  }
+
+  // #1242: `pane` is a pane id, only meaningful inside a tmux session.
+  final pane = params['pane'];
+  if (pane != null) {
+    if (tmux == null || !tmuxPaneIdShape.hasMatch(pane)) return _bad('pane');
   }
 
   final required = switch (verb) {
@@ -229,6 +248,7 @@ ConnectIntentResult parseConnectIntent(String link) {
     name: name,
     tmux: tmux,
     window: window,
+    pane: pane,
     path: path,
   ));
 }

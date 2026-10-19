@@ -8,6 +8,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mobissh/services/connect_intent.dart';
 import 'package:mobissh/services/link_verb.dart';
+import 'package:mobissh/services/tmux_link_select.dart';
 
 const _base = 'mobissh://connect?host=box.example';
 
@@ -99,7 +100,7 @@ void main() {
 
     test('unknown params are still ignored next to window= (R7)', () {
       final r = parseConnectIntent(
-          '$_base&tmux=main&window=beta&pane=3&foo=bar') as ConnectIntentParsed;
+          '$_base&tmux=main&window=beta&foo=bar') as ConnectIntentParsed;
       expect(r.request.tmux, 'main');
       expect(r.request.window, 'beta');
     });
@@ -125,6 +126,75 @@ void main() {
           throwsArgumentError);
       expect(() => tmuxSelectWindowExecLine('a:b', 'beta'),
           throwsArgumentError);
+    });
+  });
+
+  // #1242 S1: `window` also takes a tmux window id (@N) and `pane` a pane id
+  // (%N). `%` is percent-encoded in a link (`%25`): a raw `%12` decodes to a
+  // control character and rejects as malformed (R2).
+  group('#1242 window=@N and pane=%N grammar', () {
+    const tm = '$_base&tmux=main';
+
+    for (final w in ['@0', '@3', '@123456789']) {
+      test('window=$w parses', () {
+        final req = (parseConnectIntent('$tm&window=$w')
+            as ConnectIntentParsed).request;
+        expect(req.window, w);
+      });
+    }
+    for (final p in ['%250', '%2512', '%25123456789']) {
+      test('pane=$p parses and reaches the verb', () {
+        final req = (parseConnectIntent('$tm&pane=$p')
+            as ConnectIntentParsed).request;
+        expect(req.pane, Uri.decodeComponent(p));
+        final verb = LinkVerbCommand.fromRequest(req) as TmuxAttach;
+        expect(verb.pane, req.pane);
+        expect(verb.commandLine, 'tmux new-session -A -s main');
+      });
+    }
+    test('the target link: window=@3 and pane=%12 together', () {
+      final req = (parseConnectIntent('$tm&window=@3&pane=%2512')
+          as ConnectIntentParsed).request;
+      expect((req.window, req.pane), ('@3', '%12'));
+    });
+
+    for (final w in ['@', '@x', '@1%3A2', '@1.2', '@1234567890', '@-1', '@%2D1']) {
+      test('window=$w is rejected', () {
+        final r = parseConnectIntent('$tm&window=$w');
+        expect(r, isA<ConnectIntentRejected>());
+        expect((r as ConnectIntentRejected).key, 'window');
+      });
+    }
+    for (final p in [
+      '%25', // `%`
+      '@3', // a window id is not a pane id
+      '%25x',
+      '%25-1',
+      '%251.2',
+      '%251%3A2',
+      '%25%25',
+      '1',
+      '%251234567890',
+    ]) {
+      test('pane=$p is rejected', () {
+        final r = parseConnectIntent('$tm&pane=$p');
+        expect(r, isA<ConnectIntentRejected>());
+        expect((r as ConnectIntentRejected).key, 'pane');
+      });
+    }
+    test('pane without tmux is rejected', () {
+      final r = parseConnectIntent('$_base&pane=%2512');
+      expect((r as ConnectIntentRejected).key, 'pane');
+    });
+    test('pane on create is rejected', () {
+      final r = parseConnectIntent('mobissh://create?host=box.example&pane=%2512');
+      expect((r as ConnectIntentRejected).key, 'pane');
+    });
+    test('TmuxAttach refuses an id outside the grammar', () {
+      expect(() => TmuxAttach('main', window: '@x'), throwsArgumentError);
+      expect(() => TmuxAttach('main', pane: '@3'), throwsArgumentError);
+      expect(() => TmuxAttach('main', pane: "%1'"), throwsArgumentError);
+      expect(TmuxAttach('main', window: '@3', pane: '%12').pane, '%12');
     });
   });
 
@@ -165,6 +235,36 @@ void main() {
       );
       expect(ok, isFalse);
       expect(ran, isFalse);
+    });
+  });
+
+  group('#1242 selectLinkTarget notice', () {
+    Future<(TmuxLinkOutcome, List<String>)> go(
+        TmuxAttach verb, TmuxLinkOutcome outcome) async {
+      final notices = <String>[];
+      final r = await selectLinkTarget(verb,
+          run: (_) async => outcome, notify: notices.add);
+      return (r, notices);
+    }
+
+    test('selected and ambiguous show nothing', () async {
+      final verb = TmuxAttach('main', window: '@3', pane: '%12');
+      expect((await go(verb, TmuxLinkOutcome.selected)).$2, isEmpty);
+      final amb = await go(verb, TmuxLinkOutcome.ambiguous);
+      expect(amb.$1, TmuxLinkOutcome.ambiguous);
+      expect(amb.$2, isEmpty);
+    });
+
+    test('notFound → one neutral notice, extended for panes', () async {
+      expect((await go(TmuxAttach('main', window: '@3'),
+              TmuxLinkOutcome.notFound)).$2,
+          ['No window "@3" in tmux session main']);
+      expect((await go(TmuxAttach('main', pane: '%12'),
+              TmuxLinkOutcome.notFound)).$2,
+          ['No pane "%12" in tmux session main']);
+      expect((await go(TmuxAttach('main', window: '@3', pane: '%12'),
+              TmuxLinkOutcome.notFound)).$2,
+          ['No pane "%12" in window "@3" of tmux session main']);
     });
   });
 }

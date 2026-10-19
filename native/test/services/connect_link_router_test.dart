@@ -41,6 +41,10 @@ class _Spy {
   final List<String> selects = [];
   final List<String> order = [];
   Set<String> attached = {}; // `sid session` pairs the app attached via a link
+  // #1242: client-matched selects tried on a live, not-known-attached session;
+  // [clientMatched] false = AMBIGUOUS (the R23 path takes over).
+  final List<String> probes = [];
+  bool clientMatched = false;
   int rejections = 0;
   LinkConfirmChoice? confirmAnswer = LinkConfirmChoice.once;
   // #1279 G1: when set, the confirm dialog stays open until completed.
@@ -89,6 +93,10 @@ class _Spy {
         selectWindow: (sid, verb) async {
           selects.add('$sid ${verb.name}:${verb.window}');
           order.add('select');
+        },
+        selectViaClient: (sid, verb) async {
+          probes.add('$sid ${verb.name}:${verb.window}:${verb.pane}');
+          return clientMatched;
         },
         openCreate: (p) async => created.add(p),
         reject: () => rejections++,
@@ -450,6 +458,64 @@ void main() {
       expect(spy.selects, isEmpty);
     });
 
+    test('#1242 live, not known-attached, our tmux client matched → handled '
+        'by the client select: no dialog, no send, no attached-mode select',
+        () async {
+      spy.live = [
+        LiveSessionRef(id: 'alice-sid', profileKey: _alice.identityKey),
+      ];
+      spy.clientMatched = true;
+      await router.deliver('$windowLink&pane=%2512');
+      expect(spy.probes, ['alice-sid main:beta:%12']);
+      expect(spy.confirmSends, isEmpty);
+      expect(spy.sent, isEmpty);
+      expect(spy.selects, isEmpty);
+    });
+
+    test('#1242 live, client AMBIGUOUS → R23 exactly as before', () async {
+      spy.live = [
+        LiveSessionRef(id: 'alice-sid', profileKey: _alice.identityKey),
+      ];
+      await router.deliver(windowLink);
+      expect(spy.probes, hasLength(1));
+      expect(spy.confirmSends, [cmd]);
+      expect(spy.sent, ['alice-sid $cmd']);
+      expect(spy.selects, ['alice-sid main:beta']);
+      expect(spy.order, ['send', 'select']);
+    });
+
+    test('#1242 pane= alone (no window) also takes the client select', () async {
+      spy.live = [
+        LiveSessionRef(id: 'alice-sid', profileKey: _alice.identityKey),
+      ];
+      spy.clientMatched = true;
+      await router.deliver(
+          'mobissh://connect?host=box.example&user=alice&tmux=main&pane=%2512');
+      expect(spy.probes, ['alice-sid main:null:%12']);
+      expect(spy.confirmSends, isEmpty);
+    });
+
+    test('#1242 already attached by a link → attached-mode select, no probe',
+        () async {
+      spy.live = [
+        LiveSessionRef(id: 'alice-sid', profileKey: _alice.identityKey),
+      ];
+      spy.attached = {'alice-sid main'};
+      await router.deliver('$windowLink&pane=%2512');
+      expect(spy.probes, isEmpty);
+      expect(spy.selects, ['alice-sid main:beta']);
+    });
+
+    test('#1242 tmux= with neither window nor pane never probes', () async {
+      spy.live = [
+        LiveSessionRef(id: 'alice-sid', profileKey: _alice.identityKey),
+      ];
+      await router.deliver(
+          'mobissh://connect?host=box.example&user=alice&tmux=main');
+      expect(spy.probes, isEmpty);
+      expect(spy.confirmSends, [cmd]);
+    });
+
     test('the window survives the process-death pending record', () async {
       final bridge = PendingLinkBridge(store);
       await bridge.setPending(const ConnectRequest(
@@ -530,6 +596,7 @@ void main() {
         sendVerb: (_, _) {},
         isTmuxAttached: (_, _) => false,
         selectWindow: (_, _) async {},
+        selectViaClient: (_, _) async => false,
         openCreate: (p) => editor.future,
         reject: () => spy.rejections++,
         log: (where, msg) => spy.log.add('$where: $msg'),

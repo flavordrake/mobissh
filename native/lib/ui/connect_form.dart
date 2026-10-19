@@ -441,7 +441,7 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
             ? null
             : () {
                 runner.markTmuxAttached(entry.id, attach.name, entry.proxy);
-                if (attach.window != null) {
+                if (attach.selectsTarget) {
                   unawaited(runLinkWindowSelect(entry.proxy, attach));
                 }
               },
