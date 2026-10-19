@@ -38,6 +38,7 @@ import '../ssh/sftp_session.dart';
 import '../storage/profiles_store.dart' show SavedProfile;
 import 'attention_signal_scanner.dart';
 import 'link_verb.dart' show tmuxSelectWindowExecLine;
+import 'tmux_link_select.dart';
 import 'port_forwarder.dart';
 import 'session_attention_notification.dart';
 import 'session_messages.dart';
@@ -77,12 +78,16 @@ Future<SshShellTransport?> _defaultExecOpener(
 ) => openSshExecTransportSized(client, command, width: cols, height: rows);
 
 /// Runs ONE non-PTY exec on the session's connection and returns its exit
-/// status (#1211). Production uses [_defaultExecRunner]; tests inject a fake
-/// that records the line. A separate channel: nothing reaches the user's PTY.
-typedef HostExecRunner = Future<int?> Function(SSHClient client, String line);
+/// status and stdout (#1211, #1242). Production uses [_defaultExecRunner];
+/// tests inject a fake that records the line. A separate channel: nothing
+/// reaches the user's PTY.
+typedef HostExecRunner = Future<TmuxExecResult> Function(
+    SSHClient client, String line);
 
-Future<int?> _defaultExecRunner(SSHClient client, String line) async =>
-    (await client.runWithResult(line)).exitCode;
+Future<TmuxExecResult> _defaultExecRunner(SSHClient client, String line) async {
+  final r = await client.runWithResult(line);
+  return (exit: r.exitCode, out: utf8.decode(r.output, allowMalformed: true));
+}
 
 /// A factory whose controllers all share ONE [HostKeyStore] (#1249), built
 /// lazily on the first connect. Per-controller stores each held a private copy
@@ -443,6 +448,8 @@ class SessionHost {
         _handleSftpStat(cmd);
       case SshTmuxSelectWindowCommand():
         _handleTmuxSelectWindow(cmd);
+      case SshTmuxLinkSelectCommand():
+        _handleTmuxLinkSelect(cmd);
       case SshControlCommand():
         _handleControlCommand(cmd);
       case SshTmuxGestureCommand():
@@ -2128,8 +2135,9 @@ class SessionHost {
       final line = tmuxSelectWindowExecLine(cmd.session, cmd.window);
       final client = _sessions[cmd.sessionId]?.controller.client;
       if (client != null) {
-        final code = await _execRunner(client, line)
-            .timeout(const Duration(seconds: 10));
+        final code = (await _execRunner(client, line)
+                .timeout(const Duration(seconds: 10)))
+            .exit;
         selected = code == 0;
         ctrace('task.host',
             'tmux select-window exit=$code sid=${cmd.sessionId}');
@@ -2144,6 +2152,38 @@ class SessionHost {
         sessionId: cmd.sessionId,
         requestId: cmd.requestId,
         selected: selected,
+      ).toJson(),
+    );
+  }
+
+  /// #1242: select a link's tmux window (name or `@N`) and/or pane (`%N`),
+  /// optionally finding and switching OUR tmux client first. Same exec-channel
+  /// rules as [_handleTmuxSelectWindow]; the target is re-validated here, so a
+  /// forged IPC field never reaches a shell. ALWAYS replies.
+  Future<void> _handleTmuxLinkSelect(SshTmuxLinkSelectCommand cmd) async {
+    var outcome = TmuxLinkOutcome.notFound;
+    try {
+      final target =
+          TmuxLinkTarget(cmd.session, window: cmd.window, pane: cmd.pane);
+      final client = _sessions[cmd.sessionId]?.controller.client;
+      if (client != null) {
+        outcome = await runTmuxLinkSelect(
+          target: target,
+          live: cmd.live,
+          exec: (line) => _execRunner(client, line),
+          log: (line) => ctrace('task.host', '$line sid=${cmd.sessionId}'),
+        );
+      }
+    } catch (e) {
+      ctrace('task.host',
+          'tmux link select FAILED sid=${cmd.sessionId} — ${e.runtimeType}');
+    }
+    if (_disposed) return;
+    _gateway.send(
+      TmuxLinkSelectResultEvent(
+        sessionId: cmd.sessionId,
+        requestId: cmd.requestId,
+        outcome: outcome.name,
       ).toJson(),
     );
   }

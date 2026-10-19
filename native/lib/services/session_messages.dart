@@ -117,6 +117,13 @@ enum SshTaskCommandKind {
   /// control mode. Replies with a [SshTaskEventKind.tmuxSelectWindowResult].
   tmuxSelectWindow,
 
+  /// UI → task (#1242): select a tmux window (name or `@N`) and/or pane
+  /// (`%N`) of a session for a link, verifying the ids belong to it first.
+  /// `live` also finds OUR tmux client and switches it. Exec channel only;
+  /// the host re-validates every token. Replies with a
+  /// [SshTaskEventKind.tmuxLinkSelectResult].
+  tmuxLinkSelect,
+
   // --- tmux control mode (#911, Part C) ---
 
   /// UI → task: a FULL tmux `-CC` control-command LINE, delivered ATOMICALLY
@@ -242,6 +249,10 @@ enum SshTaskEventKind {
   /// tmux selected the window (exec exit 0). Every failure — no such window,
   /// no such session, no tmux, no client — is `selected=false`.
   tmuxSelectWindowResult,
+
+  /// The reply to a [SshTaskCommandKind.tmuxLinkSelect] (#1242): the
+  /// `TmuxLinkOutcome` name (`selected`, `notFound`, `ambiguous`).
+  tmuxLinkSelectResult,
 
   /// An SFTP operation failed (list, download, or upload). Carries the request
   /// id so the UI can match it to the in-flight op without tearing down the
@@ -459,6 +470,15 @@ sealed class SshTaskCommand {
           requestId: json['requestId'] as String,
           session: json['session'] as String,
           window: json['window'] as String,
+        );
+      case SshTaskCommandKind.tmuxLinkSelect:
+        return SshTmuxLinkSelectCommand(
+          sessionId: sessionId,
+          requestId: json['requestId'] as String,
+          session: json['session'] as String,
+          window: json['window'] as String?,
+          pane: json['pane'] as String?,
+          live: json['live'] as bool,
         );
       case SshTaskCommandKind.controlCommand:
         return SshControlCommand(
@@ -753,6 +773,40 @@ class SshTmuxSelectWindowCommand extends SshTaskCommand {
     'requestId': requestId,
     'session': session,
     'window': window,
+  };
+}
+
+/// UI → task (#1242): select [window] (name or `@N`) and/or [pane] (`%N`) of
+/// tmux [session]. [live] = the shell may be in tmux by hand, so find and
+/// switch OUR client first. Typed tokens only.
+class SshTmuxLinkSelectCommand extends SshTaskCommand {
+  const SshTmuxLinkSelectCommand({
+    required String sessionId,
+    required this.requestId,
+    required this.session,
+    this.window,
+    this.pane,
+    required this.live,
+  }) : super(sessionId);
+
+  final String requestId;
+  final String session;
+  final String? window;
+  final String? pane;
+  final bool live;
+
+  @override
+  SshTaskCommandKind get kind => SshTaskCommandKind.tmuxLinkSelect;
+
+  @override
+  Map<String, dynamic> toJson() => {
+    'kind': kind.name,
+    'sessionId': sessionId,
+    'requestId': requestId,
+    'session': session,
+    'window': window,
+    'pane': pane,
+    'live': live,
   };
 }
 
@@ -1345,6 +1399,12 @@ sealed class SshTaskEvent {
           sessionId: sessionId,
           requestId: json['requestId'] as String,
           selected: json['selected'] as bool,
+        );
+      case SshTaskEventKind.tmuxLinkSelectResult:
+        return TmuxLinkSelectResultEvent(
+          sessionId: sessionId,
+          requestId: json['requestId'] as String,
+          outcome: json['outcome'] as String,
         );
       case SshTaskEventKind.sftpError:
         return SftpErrorEvent(
@@ -2016,6 +2076,30 @@ class TmuxSelectWindowResultEvent extends SshTaskEvent {
     'sessionId': sessionId,
     'requestId': requestId,
     'selected': selected,
+  };
+}
+
+/// Task → UI (#1242): the reply to a [SshTmuxLinkSelectCommand]; [outcome] is
+/// a `TmuxLinkOutcome` name.
+class TmuxLinkSelectResultEvent extends SshTaskEvent {
+  const TmuxLinkSelectResultEvent({
+    required String sessionId,
+    required this.requestId,
+    required this.outcome,
+  }) : super(sessionId);
+
+  final String requestId;
+  final String outcome;
+
+  @override
+  SshTaskEventKind get kind => SshTaskEventKind.tmuxLinkSelectResult;
+
+  @override
+  Map<String, dynamic> toJson() => {
+    'kind': kind.name,
+    'sessionId': sessionId,
+    'requestId': requestId,
+    'outcome': outcome,
   };
 }
 

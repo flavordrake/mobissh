@@ -65,6 +65,7 @@ class PendingLinkBridge {
         'name': request.name,
         'tmux': request.tmux,
         'window': request.window,
+        'pane': request.pane,
         'path': request.path,
         '_seq': ++_seq,
       }),
@@ -88,6 +89,7 @@ class PendingLinkBridge {
         name: m['name'] as String?,
         tmux: m['tmux'] as String?,
         window: m['window'] as String?,
+        pane: m['pane'] as String?,
         path: m['path'] as String?,
       );
     } catch (_) {
@@ -122,6 +124,8 @@ class ConnectLinkRouter {
     required bool Function(String sessionId, String tmuxName) isTmuxAttached,
     required Future<void> Function(String sessionId, TmuxAttach verb)
         selectWindow,
+    required Future<bool> Function(String sessionId, TmuxAttach verb)
+        selectViaClient,
     required Future<void> Function(SavedProfile draft) openCreate,
     required void Function() reject,
     void Function(String where, String msg)? log,
@@ -137,6 +141,7 @@ class ConnectLinkRouter {
         _sendVerb = sendVerb,
         _isTmuxAttached = isTmuxAttached,
         _selectWindow = selectWindow,
+        _selectViaClient = selectViaClient,
         _openCreate = openCreate,
         _reject = reject,
         _log = log;
@@ -155,6 +160,7 @@ class ConnectLinkRouter {
   final void Function(String, LinkVerbCommand) _sendVerb;
   final bool Function(String, String) _isTmuxAttached;
   final Future<void> Function(String, TmuxAttach) _selectWindow;
+  final Future<bool> Function(String, TmuxAttach) _selectViaClient;
   final Future<void> Function(SavedProfile) _openCreate;
   final void Function() _reject;
   final void Function(String where, String msg)? _log;
@@ -281,10 +287,19 @@ class ConnectLinkRouter {
         // channel. Nothing is typed into the PTY, so R23 has nothing to
         // confirm, and a second attach would be a nested-tmux error.
         if (verb is TmuxAttach &&
-            verb.window != null &&
+            verb.selectsTarget &&
             _isTmuxAttached(s.id, verb.name)) {
           _log?.call('ui.link', 'window select sid=${s.id}');
           await _selectWindow(s.id, verb);
+          return;
+        }
+        // #1242 R22d: the shell may be in tmux by hand. Find OUR tmux client
+        // over the exec channel; matched → switch + select, nothing typed,
+        // nothing to confirm. AMBIGUOUS (false) → R23 below, unchanged.
+        if (verb is TmuxAttach &&
+            verb.selectsTarget &&
+            await _selectViaClient(s.id, verb)) {
+          _log?.call('ui.link', 'client select sid=${s.id}');
           return;
         }
         // R23 option (b): the bytes would land wherever the live PTY's
@@ -295,7 +310,7 @@ class ConnectLinkRouter {
           _log?.call('ui.link', 'verb sent sid=${s.id}');
           _sendVerb(s.id, verb);
           // #1211: the window select follows the attach it was confirmed with.
-          if (verb is TmuxAttach && verb.window != null) {
+          if (verb is TmuxAttach && verb.selectsTarget) {
             await _selectWindow(s.id, verb);
           }
         } else {

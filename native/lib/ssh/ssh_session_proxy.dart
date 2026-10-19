@@ -18,6 +18,7 @@ import '../diagnostics/connect_trace.dart';
 import '../services/session_host.dart';
 import '../services/session_messages.dart';
 import '../services/task_ssh_gateway.dart';
+import '../services/tmux_link_select.dart' show TmuxLinkOutcome;
 import '../terminal/tmux_control_mode_flag.dart';
 import 'ssh_connect_params.dart';
 import 'ssh_session.dart';
@@ -608,6 +609,10 @@ class SshSessionProxy {
       if (!c.isCompleted) c.complete(false);
     }
     _windowSelects.clear();
+    for (final c in _linkSelects.values) {
+      if (!c.isCompleted) c.complete(TmuxLinkOutcome.notFound);
+    }
+    _linkSelects.clear();
   }
 
   /// In-flight [tmuxSelectWindow] requests by request id (#1211).
@@ -640,6 +645,41 @@ class SshSessionProxy {
       _windowSelects.remove(requestId);
       ctrace('ui.link', 'tmux select-window TIMEOUT sid=$sessionId');
       return false;
+    });
+  }
+
+  final Map<String, Completer<TmuxLinkOutcome>> _linkSelects = {};
+  int _linkSelectSeq = 0;
+
+  /// #1242: select [window] (name or `@N`) and/or [pane] (`%N`) of tmux
+  /// [session] over the exec channel. [live] first finds OUR tmux client
+  /// (AMBIGUOUS → the caller keeps R23) and switches it to [session]. Nothing
+  /// is typed into the terminal.
+  Future<TmuxLinkOutcome> tmuxLinkSelect({
+    required String session,
+    String? window,
+    String? pane,
+    required bool live,
+    Duration timeout = const Duration(seconds: 60),
+  }) {
+    if (_disposed) return Future.value(TmuxLinkOutcome.notFound);
+    final requestId = '$sessionId#lnk${_linkSelectSeq++}';
+    final done = Completer<TmuxLinkOutcome>();
+    _linkSelects[requestId] = done;
+    gateway.send(
+      SshTmuxLinkSelectCommand(
+        sessionId: sessionId,
+        requestId: requestId,
+        session: session,
+        window: window,
+        pane: pane,
+        live: live,
+      ).toJson(),
+    );
+    return done.future.timeout(timeout, onTimeout: () {
+      _linkSelects.remove(requestId);
+      ctrace('ui.link', 'tmux link select TIMEOUT sid=$sessionId');
+      return TmuxLinkOutcome.notFound;
     });
   }
 
@@ -740,6 +780,11 @@ class SshSessionProxy {
       case TmuxSelectWindowResultEvent():
         // #1211: resolve the matching [tmuxSelectWindow] future.
         _windowSelects.remove(event.requestId)?.complete(event.selected);
+      case TmuxLinkSelectResultEvent():
+        _linkSelects.remove(event.requestId)?.complete(
+              TmuxLinkOutcome.values.asNameMap()[event.outcome] ??
+                  TmuxLinkOutcome.notFound,
+            );
       case SftpListingEvent():
       case SftpDownloadChunkEvent():
       case SftpDownloadDoneEvent():

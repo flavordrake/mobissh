@@ -26,6 +26,7 @@ import 'package:mobissh/services/link_verb.dart';
 import 'package:mobissh/services/session_host.dart';
 import 'package:mobissh/services/session_messages.dart';
 import 'package:mobissh/services/task_ssh_gateway.dart';
+import 'package:mobissh/services/tmux_link_select.dart';
 import 'package:mobissh/ssh/ssh_connect_params.dart';
 import 'package:mobissh/ssh/ssh_session.dart';
 import 'package:mobissh/ssh/ssh_session_proxy.dart';
@@ -123,7 +124,8 @@ class _Rig {
       ? ''
       : String.fromCharCodes(opened.first.sent.toBytes());
 
-  static _Rig build(String sid, {required int execExit}) {
+  static _Rig build(String sid,
+      {required int execExit, TmuxExecResult Function(String line)? reply}) {
     final socket = _SilentSocket();
     final client = SSHClient(socket, username: 'u');
     addTearDown(() {
@@ -149,7 +151,7 @@ class _Rig {
       execRunner: (c, line) async {
         execLines.add(line);
         events.add('exec:$line');
-        return execExit;
+        return reply?.call(line) ?? (exit: execExit, out: '');
       },
       snapshotInterval: const Duration(hours: 1),
     );
@@ -319,6 +321,119 @@ void main() {
       runner.sendNow(
           sessionId: sid, proxy: rig.proxy, command: TmuxAttach('work'));
       expect(runner.tmuxAttachedTo(sid), 'work');
+    });
+  });
+
+  // #1242 S1: the same wiring, for the id-based / client-matched select.
+  group('#1242 tmuxLinkSelect over exec', () {
+    const probeOk = 'V tmux 3.4\nT /dev/pts/3\nC /dev/pts/3 other\n';
+
+    TmuxExecResult scripted(String line) {
+      if (line == tmuxFindClientExecLine) return (exit: 0, out: probeOk);
+      if (line == "tmux display -p -t '@3' '#{session_name}'") {
+        return (exit: 0, out: 'main\n');
+      }
+      if (line == "tmux display -p -t '%12' '#{session_name} #{window_id}'") {
+        return (exit: 0, out: 'main @3\n');
+      }
+      return (exit: 0, out: '');
+    }
+
+    test('IPC envelopes round-trip', () {
+      const cmd = SshTmuxLinkSelectCommand(
+        sessionId: 'h:22:u:1',
+        requestId: 'lk-1',
+        session: 'main',
+        window: '@3',
+        pane: '%12',
+        live: true,
+      );
+      final back =
+          SshTaskCommand.fromJson(cmd.toJson()) as SshTmuxLinkSelectCommand;
+      expect(back.kind, SshTaskCommandKind.tmuxLinkSelect);
+      expect((back.session, back.window, back.pane, back.live),
+          ('main', '@3', '%12', true));
+      for (final o in TmuxLinkOutcome.values) {
+        final ev = TmuxLinkSelectResultEvent(
+            sessionId: 'h:22:u:1', requestId: 'lk-1', outcome: o.name);
+        final r = SshTaskEvent.fromJson(ev.toJson())
+            as TmuxLinkSelectResultEvent;
+        expect(r.outcome, o.name);
+      }
+    });
+
+    test('live + matched client: switch and selects over exec, zero PTY '
+        'bytes', () async {
+      final rig = _Rig.build('h:22:u:7', execExit: 0, reply: scripted);
+      await rig.connect();
+      final out = await rig.proxy.tmuxLinkSelect(
+          session: 'main', window: '@3', pane: '%12', live: true);
+      expect(out, TmuxLinkOutcome.selected);
+      expect(rig.execLines.first, tmuxFindClientExecLine);
+      expect(rig.execLines.last, "tmux select-pane -t '%12'");
+      expect(rig.execLines, contains("tmux select-window -t '@3'"));
+      expect(rig.ptyBytes, isEmpty,
+          reason: 'nothing is typed into the terminal');
+    });
+
+    test('live + ambiguous (no tmux): ambiguous, only the probe ran, PTY '
+        'untouched (R23 stays the caller\'s)', () async {
+      final rig = _Rig.build('h:22:u:8',
+          execExit: 0, reply: (_) => (exit: 0, out: 'X notmux\n'));
+      await rig.connect();
+      final out = await rig.proxy.tmuxLinkSelect(
+          session: 'main', window: '@3', live: true);
+      expect(out, TmuxLinkOutcome.ambiguous);
+      expect(rig.execLines, [tmuxFindClientExecLine]);
+      expect(rig.ptyBytes, isEmpty);
+    });
+
+    test('id from another session → notFound, no select ran', () async {
+      final rig = _Rig.build('h:22:u:9', execExit: 0, reply: (line) {
+        if (line.startsWith('tmux display')) return (exit: 0, out: 'x\n');
+        return scripted(line);
+      });
+      await rig.connect();
+      final out = await rig.proxy
+          .tmuxLinkSelect(session: 'main', window: '@3', live: true);
+      expect(out, TmuxLinkOutcome.notFound);
+      expect(rig.execLines.any((l) => l.contains('select-')), isFalse);
+    });
+
+    test('a forged token never reaches exec (host re-validates)', () async {
+      final rig = _Rig.build('h:22:u:10', execExit: 0, reply: scripted);
+      await rig.connect();
+      rig.pair.uiSide.send(const SshTmuxLinkSelectCommand(
+        sessionId: 'h:22:u:10',
+        requestId: 'forged',
+        session: 'main',
+        window: "@3';reboot;'",
+        live: true,
+      ).toJson());
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(rig.execLines, isEmpty);
+      expect(rig.ptyBytes, isEmpty);
+    });
+
+    test('fresh connect: attach in the PTY, THEN verified selects over exec, '
+        'no probe', () async {
+      const sid = 'h:22:u:11';
+      final rig = _Rig.build(sid, execExit: 0, reply: scripted);
+      final runner = InitialCommandRunner();
+      addTearDown(runner.dispose);
+      final verb = TmuxAttach('main', window: '@3', pane: '%12');
+      runner.arm(
+        sessionId: sid,
+        proxy: rig.proxy,
+        command: verb.commandLine,
+        onSent: () => unawaited(rig.proxy.tmuxLinkSelect(
+            session: 'main', window: '@3', pane: '%12', live: false)),
+      );
+      await rig.connect();
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      expect(rig.ptyBytes, 'tmux new-session -A -s main\n');
+      expect(rig.execLines.contains(tmuxFindClientExecLine), isFalse);
+      expect(rig.execLines.last, "tmux select-pane -t '%12'");
     });
   });
 }
