@@ -6,6 +6,9 @@ verify". Each bullet: ONE short line, what changed — NOT how to test it. Keep
 internal/test/CI/refactor work OUT. **Update this every release** (gen-apk-install-page.sh
 warns when native/lib has commits newer than this file).
 
+## v0.1.13-dev+205 (2026-10-19): links land on an exact tmux pane
+- **A link can open an exact tmux window and pane**, even in a tmux session you attached yourself: no confirm dialog, nothing typed into your terminal. If MobiSSH can't tell which tmux client is its own, it falls back to the confirm dialog; a stale or wrong window/pane shows a short notice and changes nothing. (#1242) **Device-test:** tap a MobiHarness session's terminal link while that tmux is open.
+
 ## v0.1.13-dev+204 (2026-10-17): MobiSSH opens ssh:// links
 - **MobiSSH now appears in "Open with" for `ssh://` links**, alongside ConnectBot and Termius. A link to a saved host connects with that profile; an unsaved host opens the profile editor with a "came from a link" banner; a link carrying a password is refused. (#1279) **Device-test:** tap Open SSH in MobiHarness and pick MobiSSH.
 
