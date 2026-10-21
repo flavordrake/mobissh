@@ -423,7 +423,20 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
       final runner = ref.read(initialCommandRunnerProvider);
       if (verb != null) {
         runner.cancel(entry.id);
-        ctrace('ui.link', 'arming link verb for ${entry.id}');
+        // Kind only: no host/user/session id (traces leave the device).
+        final selects = [
+          if (verb is TmuxAttach && verb.window != null) 'window',
+          if (verb is TmuxAttach && verb.pane != null) 'pane',
+        ];
+        final live = entry.proxy.data.state == SshSessionState.connected;
+        ctrace(
+          'ui.link',
+          live
+              ? 'verb dropped reason=session-live'
+              : 'armed verb=${verb is TmuxAttach ? 'tmux' : 'other'}'
+                  '${selects.isEmpty ? '' : ' selects=${selects.join(',')}'}'
+                  '${initialCommand.isEmpty ? '' : ' replaces=initialCommand'}',
+        );
       }
       // #1211: a `tmux=` verb records the attach, and a `window=` select
       // follows it on the SAME shell-ready tick, over the exec channel. Gated
@@ -591,7 +604,7 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
               '(phone migration?) — re-enter it below to connect.'
           : 'No saved credentials for this profile — enter them below to '
               'connect.';
-      await _editProfile(profile, notice: notice);
+      await _editProfile(profile, notice: notice, verb: verb);
       return;
     }
 
@@ -624,10 +637,12 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
     } on JumpChainError catch (e) {
       if (!mounted) return;
       setState(() => _jumpError = 'Jump host: ${e.message}');
+      if (verb != null) ctrace('ui.link', 'verb dropped reason=jump-chain');
       return;
     } on JumpHopError catch (e) {
       if (!mounted) return;
       setState(() => _jumpError = 'Jump host $e');
+      if (verb != null) ctrace('ui.link', 'verb dropped reason=jump-hop');
       return;
     }
     if (!mounted) return;
@@ -718,15 +733,24 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
   /// #579 edit pencil / #583 no-creds fallback. Open the full profile editor;
   /// on save, refresh the saved-profile list, and if the user chose "Save &
   /// connect", route through the shared connect path.
-  Future<void> _editProfile(SavedProfile profile, {String? notice}) async {
+  ///
+  /// [verb]: set only by the link hand-off's missing-credentials editor, so
+  /// its "Save & connect" still runs the link's command (R12/R25).
+  Future<void> _editProfile(SavedProfile profile,
+      {String? notice, LinkVerbCommand? verb}) async {
     final result = await showProfileEditor(context, profile, notice: notice);
-    if (!mounted || result == null) return;
+    if (!mounted || result == null) {
+      if (verb != null) ctrace('ui.link', 'verb dropped reason=editor-closed');
+      return;
+    }
     if (result.saved) {
       ref.invalidate(savedProfilesProvider);
     }
     final toConnect = result.connect;
     if (toConnect != null) {
-      await _connectFromProfile(toConnect);
+      await _connectFromProfile(toConnect, verb: verb);
+    } else if (verb != null) {
+      ctrace('ui.link', 'verb dropped reason=saved-without-connect');
     }
   }
 
