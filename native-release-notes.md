@@ -6,6 +6,10 @@ verify". Each bullet: ONE short line, what changed — NOT how to test it. Keep
 internal/test/CI/refactor work OUT. **Update this every release** (gen-apk-install-page.sh
 warns when native/lib has commits newer than this file).
 
+## v0.1.13-dev+206 (2026-10-21): links keep their tmux command after you enter a password
+- **A tmux link to a profile with no saved password** now still attaches tmux after you enter the password and tap Save & connect. Before, the editor connected to a plain shell. (#1297) **Device-test:** a MobiHarness link to a host whose profile has no saved password, then Save & connect.
+- Link connects now log whether the link's command was used or dropped (command kind only, no host or user), so a bug report shows what happened.
+
 ## v0.1.13-dev+205 (2026-10-19): links land on an exact tmux pane
 - **A link can open an exact tmux window and pane**, even in a tmux session you attached yourself: no confirm dialog, nothing typed into your terminal. If MobiSSH can't tell which tmux client is its own, it falls back to the confirm dialog; a stale or wrong window/pane shows a short notice and changes nothing. (#1242) **Device-test:** tap a MobiHarness session's terminal link while that tmux is open.
 
