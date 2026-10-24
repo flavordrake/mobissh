@@ -6,6 +6,9 @@ verify". Each bullet: ONE short line, what changed — NOT how to test it. Keep
 internal/test/CI/refactor work OUT. **Update this every release** (gen-apk-install-page.sh
 warns when native/lib has commits newer than this file).
 
+## v0.1.13-dev+207 (2026-10-24): tmux pane links work on Tailscale SSH hosts
+- **A tmux link into an open session that's already in tmux now switches and selects instead of offering to type `tmux new-session`**, on hosts that use Tailscale SSH (like fd-dev). MobiSSH found its own tmux client by looking for the OpenSSH server process, which Tailscale SSH doesn't have; it now matches by the SSH connection itself. (#1299) **Device-test:** tap a MobiHarness terminal link while your fd-dev session is inside tmux.
+
 ## v0.1.13-dev+206 (2026-10-21): links keep their tmux command after you enter a password
 - **A tmux link to a profile with no saved password** now still attaches tmux after you enter the password and tap Save & connect. Before, the editor connected to a plain shell. (#1297) **Device-test:** a MobiHarness link to a host whose profile has no saved password, then Save & connect.
 - Link connects now log whether the link's command was used or dropped (command kind only, no host or user), so a bug report shows what happened.
