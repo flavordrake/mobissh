@@ -16,6 +16,13 @@
 
 set -euo pipefail
 
+# DISABLED (#1298): the phases below force-remove worktrees with no PR (every
+# worktree-agent-* checkout, merged or not), uncommitted/untracked work and
+# worktrees with a live job, and `branch -D` unmerged commits. Kept for the fix.
+echo "worktree-cleanup.sh is disabled (#1298): it deletes in-flight and uncommitted agent work." >&2
+echo "Use scripts/worktree-prune-merged.sh (merged + clean + idle worktrees only, no branch deletion)." >&2
+exit 2
+
 source "$(dirname "$0")/lib/repo-guard.sh"
 ensure_repo_root
 
