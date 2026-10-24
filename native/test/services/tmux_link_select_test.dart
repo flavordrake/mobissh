@@ -90,6 +90,95 @@ void main() {
     });
   });
 
+  // #1299: Tailscale SSH runs every session as a child of ONE tailscaled, so
+  // there is no per-connection sshd to walk to. The probe matches clients by
+  // SSH_CONNECTION host-side and emits `M <tty> <session>` per match.
+  group('parseTmuxClientProbe — SSH_CONNECTION (#1299)', () {
+    test('one M line, no sshd ancestor (Tailscale SSH) → matched', () {
+      final p = parseTmuxClientProbe(
+          'V tmux 3.4\nM /dev/pts/5 main\nX nosshd\nC /dev/pts/5 main\n'
+          'C /dev/pts/9 other\n');
+      expect(p.matched, isTrue);
+      expect(p.tty, '/dev/pts/5');
+      expect(p.session, 'main');
+      expect(p.method, 'ssh_connection');
+    });
+
+    test('the M line wins over a differing sshd-tree answer', () {
+      final p = parseTmuxClientProbe(
+          'V tmux 3.4\nM /dev/pts/5 main\nT /dev/pts/3\nC /dev/pts/3 a\n'
+          'C /dev/pts/5 main\n');
+      expect(p.tty, '/dev/pts/5');
+      expect(p.method, 'ssh_connection');
+    });
+
+    test('no M line (SSH_CONNECTION empty) → the sshd walk is used', () {
+      final p = parseTmuxClientProbe(_probeOk);
+      expect(p.matched, isTrue);
+      expect(p.method, 'sshd_tree');
+    });
+
+    test('two M lines → falls back to the sshd walk', () {
+      final p = parseTmuxClientProbe(
+          'V tmux 3.4\nM /dev/pts/5 a\nM /dev/pts/6 b\nT /dev/pts/3\n'
+          'C /dev/pts/3 main\n');
+      expect(p.tty, '/dev/pts/3');
+      expect(p.method, 'sshd_tree');
+    });
+
+    test('two M lines and no sshd ancestor → ambiguous', () {
+      final p = parseTmuxClientProbe(
+          'V tmux 3.4\nM /dev/pts/5 a\nM /dev/pts/6 b\nX nosshd\n');
+      expect(p.matched, isFalse);
+      expect(p.reason, 'no-sshd');
+    });
+
+    test('no M line and no sshd ancestor → ambiguous, as before', () {
+      final p = parseTmuxClientProbe('V tmux 3.4\nX nosshd\nC /dev/pts/5 a\n');
+      expect(p.matched, isFalse);
+      expect(p.reason, 'no-sshd');
+    });
+
+    test('an M tty outside /dev/pts/N never matches', () {
+      final p = parseTmuxClientProbe("V tmux 3.4\nM /dev/pts/5';x a\nX nosshd\n");
+      expect(p.matched, isFalse);
+    });
+
+    test('old tmux stays ambiguous even with an M line', () {
+      final p = parseTmuxClientProbe('V tmux 3.1\nM /dev/pts/5 a\n');
+      expect(p.reason, 'old-tmux');
+    });
+
+    test('the probe line stays one single-quote-free sh -c payload', () {
+      expect(tmuxFindClientExecLine, contains(r'${SSH_CONNECTION-}'));
+      final inner = tmuxFindClientExecLine.substring(
+          "sh -c '".length, tmuxFindClientExecLine.length - 1);
+      expect(inner, isNot(contains("'")));
+    });
+  });
+
+  group('runTmuxLinkSelect — SSH_CONNECTION match (#1299)', () {
+    test('matched by ssh_connection: switches our client, logs the method',
+        () async {
+      final log = <String>[];
+      final exec = _Exec({
+        tmuxFindClientExecLine:
+            _ok('V tmux 3.4\nM /dev/pts/5 main\nX nosshd\n'),
+        "tmux display -p -t '@3' '#{session_name}'": _ok('work\n'),
+        "tmux switch-client -c '/dev/pts/5' -t '=work'": _ok(),
+        "tmux select-window -t '@3'": _ok(),
+      });
+      final r = await runTmuxLinkSelect(
+          target: TmuxLinkTarget('work', window: '@3'),
+          live: true,
+          exec: exec.call,
+          log: log.add);
+      expect(r, TmuxLinkOutcome.selected);
+      expect(log.first, 'tmux link probe: matched method=ssh_connection');
+      expect(log.join('\n'), isNot(contains('pts')));
+    });
+  });
+
   group('TmuxLinkTarget', () {
     test('refuses tokens outside the grammar', () {
       expect(() => TmuxLinkTarget('a:b'), throwsArgumentError);
@@ -316,7 +405,7 @@ void main() {
           exec: exec.call,
           log: log.add);
       expect(log, [
-        'tmux link probe: matched',
+        'tmux link probe: matched method=sshd_tree',
         'tmux link verify: ok',
       ]);
       final all = log.join('\n');
@@ -336,7 +425,7 @@ void main() {
           live: true,
           exec: exec.call,
           log: log.add);
-      expect(log, ['tmux link probe: matched', 'tmux link verify: mismatch']);
+      expect(log, ['tmux link probe: matched method=sshd_tree', 'tmux link verify: mismatch']);
     });
   });
 }
